@@ -1,21 +1,21 @@
 //This is a system to switch ON the lights using push button or switches
 
 //code
-int LED= 12 // LED is connected to port 12 in arduino 
-int BUTTON=4 // BUTTON is connectde to port 4 in arduino
+int LED= 12; // LED is connected to port 12 in arduino 
+int BUTTON=4 ;// BUTTON is connectde to port 4 in arduino
 
 void setup()
 {
-pinMODE(LED, OUTPUT);// LED is the output
-pinMODE(BUTTON, INPUT);// BUTTON is the input
+pinMode(LED, OUTPUT);// LED is the output
+pinMode(BUTTON, INPUT);// BUTTON is the input
 }
 
 void loop()// creates a function called loop which helps the code runs forever
 {if
 (digitalRead(button)==HIGH) {
- digitalWrite(LED, HIGH)//  When the button will be pushed the LED will automatically blink with 30 seconds delay
- delay(30000)}
+ digitalWrite(LED, HIGH);//  When the button will be pushed the LED will automatically blink with 30 seconds delay
+ delay(30000);}
  else{
- digitalWrite(LED, LOW)//if the button will not be pushed the LED will automatically stop blinking
- delay(30000)}
+ digitalWrite(LED, LOW);//if the button will not be pushed the LED will automatically stop blinking
+ delay(30000);}
  }
