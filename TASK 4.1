@@ -1,0 +1,76 @@
+#define PIR_PIN 2
+#define SLIDER_PIN 3
+#define PORCH_LED 5
+#define HALL_LED 6
+
+#define PORCH_DURATION 30000   // 30 seconds
+#define HALL_DURATION 60000    // 60 seconds
+
+bool porchOn = false; // track status of led
+bool hallOn = false;
+unsigned long porchStartTime = 0;
+unsigned long hallStartTime = 0;
+//using volatile because interrupts can change value any time
+volatile bool pirTriggered = false;
+volatile bool sliderTriggered = false;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(PIR_PIN, INPUT);//set pir as input
+  pinMode(SLIDER_PIN, INPUT_PULLUP);//set slider pin as input 
+  pinMode(PORCH_LED, OUTPUT);//set porch led as output
+  pinMode(HALL_LED, OUTPUT);//set hall led as output
+
+  digitalWrite(PORCH_LED, LOW);
+  digitalWrite(HALL_LED, LOW);
+
+  attachInterrupt(digitalPinToInterrupt(PIR_PIN), pirInterrupt, RISING);//if pir detects motion it triggers
+  attachInterrupt(digitalPinToInterrupt(SLIDER_PIN), sliderInterrupt, FALLING);//if slider is turned on it triggers
+}
+
+void pirInterrupt() {
+  // Only trigger if LEDs are off
+  if (!porchOn && !hallOn) pirTriggered = true;
+}
+
+void sliderInterrupt() {
+  if (!porchOn && !hallOn) sliderTriggered = true;
+}
+
+void loop() {
+  unsigned long currentTime = millis();
+// if pir motion detected, slider triggered then LED glow
+  if (pirTriggered || sliderTriggered) {
+    bool pir = pirTriggered;
+    bool slider = sliderTriggered;
+    pirTriggered = false;
+    sliderTriggered = false;
+
+    // Turn on LEDs
+    digitalWrite(PORCH_LED, HIGH);
+    digitalWrite(HALL_LED, HIGH);
+    porchOn = true;
+    hallOn = true;
+    porchStartTime = currentTime;
+    hallStartTime = currentTime;
+//printing output
+    if (pir) Serial.println("PIR detected motion!");
+    if (slider) Serial.println("Slider switch activated!");
+    Serial.println("Porch and Hall LEDs ON");
+  }
+
+  // Turn off porch LED after 30s
+  if (porchOn && (currentTime - porchStartTime >= PORCH_DURATION)) {
+    digitalWrite(PORCH_LED, LOW);
+    porchOn = false;
+    Serial.println("Porch LED OFF");
+  }
+
+  // Turn off hall LED after 60s
+  if (hallOn && (currentTime - hallStartTime >= HALL_DURATION)) {
+    digitalWrite(HALL_LED, LOW);
+    hallOn = false;
+    Serial.println("Hall LED OFF");
+  }
+}
