@@ -11,7 +11,7 @@ const int mqttPort = 8883;
 const char* mqttUser = "Ansh2503";      
 const char* mqttPassword = "Ansh@2503";
 
-// ===== Your Name (FIXED HERE) =====
+// ===== Your Name  =====
 const char* studentName = "Ansh";
 
 // ===== Ultrasonic Sensor Pins =====
