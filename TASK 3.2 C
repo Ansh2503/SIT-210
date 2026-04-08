@@ -7,9 +7,12 @@ const char* password = "14004209";
 
 // ===== HiveMQ Cloud MQTT =====
 const char* mqttServer = "080b491ea779488d806806d7d60063a2.s1.eu.hivemq.cloud";
-const int mqttPort = 8883;              // SSL port
-const char* mqttUser = "Ansh2503";      // HiveMQ username
-const char* mqttPassword = "Ansh@2503"; // HiveMQ password
+const int mqttPort = 8883;              
+const char* mqttUser = "Ansh2503";      
+const char* mqttPassword = "Ansh@2503";
+
+// ===== Your Name (FIXED HERE) =====
+const char* studentName = "Ansh";
 
 // ===== Ultrasonic Sensor Pins =====
 const int trigPin = 7;
@@ -20,7 +23,7 @@ const int led1 = 5;
 const int led2 = 6;
 
 // ===== MQTT Client =====
-WiFiSSLClient wifiClient;   // Secure client for Nano 33 IoT
+WiFiSSLClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
 // ===== Distance Measurement =====
@@ -33,7 +36,7 @@ bool patDetected = false;
 
 // ===== Cooldown =====
 unsigned long lastPublishTime = 0;
-const unsigned long publishCooldown = 2000; // 2 seconds
+const unsigned long publishCooldown = 2000;
 
 // ===== Function Prototypes =====
 void connectWiFi();
@@ -43,15 +46,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length);
 void setup() {
   Serial.begin(9600);
 
-  // ===== Pin Setup =====
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
   pinMode(led1, OUTPUT);
   pinMode(led2, OUTPUT);
+
   digitalWrite(led1, LOW);
   digitalWrite(led2, LOW);
 
-  // ===== Connect WiFi and MQTT =====
   connectWiFi();
   mqttClient.setServer(mqttServer, mqttPort);
   mqttClient.setCallback(mqttCallback);
@@ -71,54 +73,69 @@ void loop() {
   digitalWrite(trigPin, LOW);
 
   duration = pulseIn(echoPin, HIGH);
-  distance = duration * 0.034 / 2; // cm
+  distance = duration * 0.034 / 2;
 
-  if (distance > 0) Serial.print("Distance: "); Serial.println(distance);
+  if (distance > 0) {
+    Serial.print("Distance: ");
+    Serial.println(distance);
+  }
 
   unsigned long currentTime = millis();
 
-  // ===== Wave Detection (<=10 cm) =====
+  // ===== Wave Detection =====
   if (distance > 0 && distance <= 10 && !waveDetected && currentTime - lastPublishTime > publishCooldown) {
-    mqttClient.publish("ES/Wave", "Wave detected by Linda");
-    Serial.println("Wave published to ES/Wave");
+    String waveMsg = String("Wave detected by ") + studentName;
+    mqttClient.publish("ES/Wave", waveMsg.c_str());
+
+    Serial.println(waveMsg);
+
     waveDetected = true;
     patDetected = false;
     lastPublishTime = currentTime;
   }
-  // ===== Pat Detection (11-20 cm) =====
+
+  // ===== Pat Detection =====
   else if (distance > 10 && distance <= 20 && !patDetected && currentTime - lastPublishTime > publishCooldown) {
-    mqttClient.publish("ES/Pat", "Pat detected by Linda");
-    Serial.println("Pat published to ES/Pat");
+    String patMsg = String("Pat detected by ") + studentName;
+    mqttClient.publish("ES/Pat", patMsg.c_str());
+
+    Serial.println(patMsg);
+
     patDetected = true;
     waveDetected = false;
     lastPublishTime = currentTime;
   }
+
+  // ===== Reset =====
   else if (distance > 20 || distance == 0) {
-    // Reset detection states when nothing is near
     waveDetected = false;
     patDetected = false;
   }
 
-  delay(500); // slow down loop, 2 readings per second
+  delay(500);
 }
 
-// ===== Connect to WiFi =====
+// ===== Connect WiFi =====
 void connectWiFi() {
   Serial.print("Connecting to WiFi");
   WiFi.begin(ssid, password);
+
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
+
   Serial.println(" Connected!");
 }
 
-// ===== Connect to HiveMQ Cloud =====
+// ===== Connect MQTT =====
 void connectMQTT() {
   while (!mqttClient.connected()) {
     Serial.println("Connecting to MQTT...");
+
     if (mqttClient.connect("ArduinoNano33Client", mqttUser, mqttPassword)) {
       Serial.println("Connected to HiveMQ Cloud");
+
       mqttClient.subscribe("ES/Wave");
       mqttClient.subscribe("ES/Pat");
     } else {
@@ -130,9 +147,10 @@ void connectMQTT() {
   }
 }
 
-// ===== MQTT Callback for LED Control =====
+// ===== MQTT Callback =====
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String message;
+
   for (int i = 0; i < length; i++) {
     message += (char)payload[i];
   }
