@@ -1,0 +1,58 @@
+#include "mainwindow.h"
+#include <QApplication>    // Needed for qApp
+#include <QPushButton>
+#include <QRadioButton>
+#include <QVBoxLayout>
+#include <wiringPi.h>
+
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent)
+{
+    wiringPiSetup();       // Initialize GPIO
+    pinMode(0, OUTPUT);    // Living Room LED
+    pinMode(2, OUTPUT);    // Bathroom LED
+    pinMode(3, OUTPUT);    // Closet LED
+
+    QWidget *centralWidget = new QWidget(this);
+    QVBoxLayout *layout = new QVBoxLayout;
+
+    QRadioButton *livingRoom = new QRadioButton("Living Room");
+    QRadioButton *bathroom = new QRadioButton("Bathroom");
+    QRadioButton *closet = new QRadioButton("Closet");
+    QPushButton *exitBtn = new QPushButton("Exit");
+
+    layout->addWidget(livingRoom);
+    layout->addWidget(bathroom);
+    layout->addWidget(closet);
+    layout->addWidget(exitBtn);
+
+    centralWidget->setLayout(layout);
+    setCentralWidget(centralWidget);
+
+    connect(livingRoom, &QRadioButton::clicked, [](){
+        digitalWrite(0, HIGH);
+        digitalWrite(2, LOW);
+        digitalWrite(3, LOW);
+    });
+
+    connect(bathroom, &QRadioButton::clicked, [](){
+        digitalWrite(0, LOW);
+        digitalWrite(2, HIGH);
+        digitalWrite(3, LOW);
+    });
+
+    connect(closet, &QRadioButton::clicked, [](){
+        digitalWrite(0, LOW);
+        digitalWrite(2, LOW);
+        digitalWrite(3, HIGH);
+    });
+
+    connect(exitBtn, &QPushButton::clicked, qApp, &QApplication::quit);
+}
+
+MainWindow::~MainWindow()
+{
+    digitalWrite(0, LOW);
+    digitalWrite(2, LOW);
+    digitalWrite(3, LOW);
+}
