@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>LED Control</title>
+  <script>
+    const arduinoIP = "192.168.0.146"; // Replace with IP shown in Serial Monitor
+
+    function toggleLED(led, state) {
+      fetch(`http://${arduinoIP}/?led=${led}&state=${state}`);//sends the http request to arduino 
+    }
+
+    function toggleButton(button, led) {
+      const state = button.checked ? 1 : 0; //checks if the checkbox is on or off
+      toggleLED(led, state);
+    }
+  </script>
+</head>
+<body>
+  <h1>Arduino LED Control</h1>
+
+  <label>
+    <input type="checkbox" id="livingRoom" onclick="toggleButton(this, 'livingroom')"> //whenever toggle button gets clicked it passes led name and checks the checkbox for living room
+    Living Room
+  </label><br>
+
+  <label>
+    <input type="checkbox" id="bathroom" onclick="toggleButton(this, 'bathroom')">
+    Bathroom
+  </label><br>
+
+  <label>
+    <input type="checkbox" id="closet" onclick="toggleButton(this, 'closet')">
+    Closet
+  </label>
+</body>
+</html>
