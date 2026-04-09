@@ -1,0 +1,79 @@
+#include "mainwindow.h"
+#include <wiringPi.h>
+#include <QApplication>
+
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent)
+{
+    // ----- GPIO Setup -----
+    wiringPiSetupGpio();           // Use BCM numbering
+    pinMode(LIVING_ROOM_PIN, PWM_OUTPUT); // PWM for Living Room LED
+    pinMode(BATHROOM_PIN, OUTPUT);        // ON/OFF for Bathroom LED
+    pinMode(CLOSET_PIN, OUTPUT);          // ON/OFF for Closet LED
+    pwmWrite(LIVING_ROOM_PIN, 0);         // Start with LED off
+
+    // ----- Create central widget and layout -----
+    QWidget *centralWidget = new QWidget(this);
+    QVBoxLayout *layout = new QVBoxLayout;
+
+    // ----- Create buttons -----
+    livingRoomButton = new QRadioButton("Living Room");
+    bathroomButton   = new QRadioButton("Bathroom");
+    closetButton     = new QRadioButton("Closet");
+    exitButton       = new QPushButton("Exit");
+
+    // ----- Create slider for brightness -----
+    brightnessSlider = new QSlider(Qt::Horizontal);
+    brightnessSlider->setRange(0, 1023); // PWM range
+    brightnessSlider->setValue(512);     // Start at medium brightness
+
+    // ----- Add widgets to layout -----
+    layout->addWidget(livingRoomButton);
+    layout->addWidget(bathroomButton);
+    layout->addWidget(closetButton);
+    layout->addWidget(brightnessSlider);
+    layout->addWidget(exitButton);
+
+    centralWidget->setLayout(layout);
+    setCentralWidget(centralWidget);
+
+    // ----- Connect signals to slots -----
+    // Living Room button
+    connect(livingRoomButton, &QRadioButton::clicked, [=](){
+        pwmWrite(LIVING_ROOM_PIN, brightnessSlider->value()); // Turn on LED with current slider value
+        digitalWrite(BATHROOM_PIN, LOW);
+        digitalWrite(CLOSET_PIN, LOW);
+    });
+
+    // Bathroom button
+    connect(bathroomButton, &QRadioButton::clicked, [=](){
+        pwmWrite(LIVING_ROOM_PIN, 0); // Turn off Living Room LED
+        digitalWrite(BATHROOM_PIN, HIGH);
+        digitalWrite(CLOSET_PIN, LOW);
+    });
+
+    // Closet button
+    connect(closetButton, &QRadioButton::clicked, [=](){
+        pwmWrite(LIVING_ROOM_PIN, 0); // Turn off Living Room LED
+        digitalWrite(BATHROOM_PIN, LOW);
+        digitalWrite(CLOSET_PIN, HIGH);
+    });
+
+    // Slider changes brightness in real-time
+    connect(brightnessSlider, &QSlider::valueChanged, [=](int value){
+        if (livingRoomButton->isChecked()) {
+            pwmWrite(LIVING_ROOM_PIN, value); // Only change brightness if Living Room is ON
+        }
+    });
+
+    // Exit button closes the app
+    connect(exitButton, &QPushButton::clicked, qApp, &QApplication::quit);
+}
+
+MainWindow::~MainWindow()
+{
+    // Turn off all LEDs when window closes
+    pwmWrite(LIVING_ROOM_PIN, 0);
+    digitalWrite(BATHROOM_PIN, LOW);
+    digitalWrite(CLOSET_PIN, LOW);
+}
