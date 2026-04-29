@@ -1,26 +1,30 @@
 #include "mainwindow.h"
-#include <QApplication>    // Needed for qApp
-#include <QPushButton>
-#include <QRadioButton>
+#include <QApplication>
+#include <QCheckBox>
 #include <QVBoxLayout>
+#include <QWidget>
 #include <wiringPi.h>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    wiringPiSetup();       // Initialize GPIO
-    pinMode(0, OUTPUT);    // Living Room LED
-    pinMode(2, OUTPUT);    // Bathroom LED
-    pinMode(3, OUTPUT);    // Closet LED
+    // Initialize GPIO
+    wiringPiSetup();
+    pinMode(0, OUTPUT); // Living Room
+    pinMode(2, OUTPUT); // Bathroom
+    pinMode(3, OUTPUT); // Closet
 
     QWidget *centralWidget = new QWidget(this);
     QVBoxLayout *layout = new QVBoxLayout;
 
-    QRadioButton *livingRoom = new QRadioButton("Living Room");
-    QRadioButton *bathroom = new QRadioButton("Bathroom");
-    QRadioButton *closet = new QRadioButton("Closet");
+    // Create checkboxes
+    QCheckBox *livingRoom = new QCheckBox("Living Room");
+    QCheckBox *bathroom   = new QCheckBox("Bathroom");
+    QCheckBox *closet     = new QCheckBox("Closet");
+
     QPushButton *exitBtn = new QPushButton("Exit");
 
+    // Add to layout
     layout->addWidget(livingRoom);
     layout->addWidget(bathroom);
     layout->addWidget(closet);
@@ -29,29 +33,26 @@ MainWindow::MainWindow(QWidget *parent)
     centralWidget->setLayout(layout);
     setCentralWidget(centralWidget);
 
-    connect(livingRoom, &QRadioButton::clicked, [](){
-        digitalWrite(0, HIGH);
-        digitalWrite(2, LOW);
-        digitalWrite(3, LOW);
+    // Connect checkboxes to GPIO
+    connect(livingRoom, &QCheckBox::toggled, [](bool checked){
+        digitalWrite(0, checked ? HIGH : LOW);
     });
 
-    connect(bathroom, &QRadioButton::clicked, [](){
-        digitalWrite(0, LOW);
-        digitalWrite(2, HIGH);
-        digitalWrite(3, LOW);
+    connect(bathroom, &QCheckBox::toggled, [](bool checked){
+        digitalWrite(2, checked ? HIGH : LOW);
     });
 
-    connect(closet, &QRadioButton::clicked, [](){
-        digitalWrite(0, LOW);
-        digitalWrite(2, LOW);
-        digitalWrite(3, HIGH);
+    connect(closet, &QCheckBox::toggled, [](bool checked){
+        digitalWrite(3, checked ? HIGH : LOW);
     });
 
+    // Exit button
     connect(exitBtn, &QPushButton::clicked, qApp, &QApplication::quit);
 }
 
 MainWindow::~MainWindow()
 {
+    // Turn everything OFF on exit
     digitalWrite(0, LOW);
     digitalWrite(2, LOW);
     digitalWrite(3, LOW);
