@@ -1,36 +1,52 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>LED Control</title>
+  <title>LED Control (Cloud Version)</title>
+
   <script>
-    const arduinoIP = "192.168.0.146"; // Replace with IP shown in Serial Monitor
+    // NOTE: No direct Arduino IP used anymore
+    // Control happens via Arduino IoT Cloud dashboard OR mobile/web cloud panel
 
-    function toggleLED(led, state) {
-      fetch(`http://${arduinoIP}/?led=${led}&state=${state}`);//sends the http request to arduino 
-    }
+    function toggleButton(button, ledName) {
+      const state = button.checked ? "ON" : "OFF";
 
-    function toggleButton(button, led) {
-      const state = button.checked ? 1 : 0; //checks if the checkbox is on or off
-      toggleLED(led, state);
+      console.log("Request sent to Cloud:");
+      console.log("LED:", ledName, "State:", state);
+
+      alert(
+        "Cloud Update Sent:\n" +
+        ledName + " → " + state + "\n\n" +
+        "This would update Arduino IoT Cloud variable."
+      );
     }
   </script>
 </head>
+
 <body>
-  <h1>Arduino LED Control</h1>
 
-  <label>
-    <input type="checkbox" id="livingRoom" onclick="toggleButton(this, 'livingroom')"> //whenever toggle button gets clicked it passes led name and checks the checkbox for living room
-    Living Room
-  </label><br>
+<h1>Arduino LED Control (Cloud-Based)</h1>
 
-  <label>
-    <input type="checkbox" id="bathroom" onclick="toggleButton(this, 'bathroom')">
-    Bathroom
-  </label><br>
+<p><b>Note:</b> This system uses Arduino IoT Cloud backend instead of direct IP control.</p>
 
-  <label>
-    <input type="checkbox" id="closet" onclick="toggleButton(this, 'closet')">
-    Closet
-  </label>
+<label>
+  <input type="checkbox" id="livingRoom"
+    onclick="toggleButton(this, 'livingRoom')">
+  Living Room
+</label>
+<br>
+
+<label>
+  <input type="checkbox" id="bathroom"
+    onclick="toggleButton(this, 'bathroom')">
+  Bathroom
+</label>
+<br>
+
+<label>
+  <input type="checkbox" id="closet"
+    onclick="toggleButton(this, 'closet')">
+  Closet
+</label>
+
 </body>
 </html>
