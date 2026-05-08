@@ -1,11 +1,11 @@
 #include "thingProperties.h"
 
-// LED pins
 const int livingRoomPin = 5;
 const int bathroomPin   = 6;
 const int closetPin     = 7;
 
 void setup() {
+
   Serial.begin(9600);
   delay(1500);
 
@@ -13,28 +13,57 @@ void setup() {
   pinMode(bathroomPin, OUTPUT);
   pinMode(closetPin, OUTPUT);
 
-  // Init cloud connection
+  digitalWrite(livingRoomPin, LOW);
+  digitalWrite(bathroomPin, LOW);
+  digitalWrite(closetPin, LOW);
+
   initProperties();
+
   ArduinoCloud.begin(ArduinoIoTPreferredConnection);
 
-  Serial.println("Connected to Arduino IoT Cloud");
+  Serial.println("Arduino Cloud Connected");
 }
 
 void loop() {
   ArduinoCloud.update();
 }
 
-// ===== CLOUD FUNCTIONS =====
-// These are triggered automatically when cloud variables change
+/*
+  CALLBACK FUNCTIONS (Triggered automatically by Cloud)
+*/
 
 void onLivingRoomChange() {
-  digitalWrite(livingRoomPin, livingRoom ? HIGH : LOW);
+
+  digitalWrite(livingRoomPin, livingRoom);
+
+  Serial.println("BACKEND UPDATE → Living Room");
+
+  if (livingRoom)
+    Serial.println("Living Room LED: ON");
+  else
+    Serial.println("Living Room LED: OFF");
 }
 
 void onBathroomChange() {
-  digitalWrite(bathroomPin, bathroom ? HIGH : LOW);
+
+  digitalWrite(bathroomPin, bathroom);
+
+  Serial.println("BACKEND UPDATE → Bathroom");
+
+  if (bathroom)
+    Serial.println("Bathroom LED: ON");
+  else
+    Serial.println("Bathroom LED: OFF");
 }
 
 void onClosetChange() {
-  digitalWrite(closetPin, closet ? HIGH : LOW);
+
+  digitalWrite(closetPin, closet);
+
+  Serial.println("BACKEND UPDATE → Closet");
+
+  if (closet)
+    Serial.println("Closet LED: ON");
+  else
+    Serial.println("Closet LED: OFF");
 }
