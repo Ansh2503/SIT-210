@@ -1,69 +1,78 @@
-#include "thingProperties.h"
+#include <WiFiNINA.h>//Libraries
+#include <PubSubClient.h>
 
-const int livingRoomPin = 5;
-const int bathroomPin   = 6;
-const int closetPin     = 7;
+char ssid[] = "2002/33_Rose_Lane";
+char pass[] = "H@Dc!#G2Q9XcnJ63";
+
+WiFiClient wifiClient;
+PubSubClient client(wifiClient);
+
+const char* mqttServer = "broker.hivemq.com";
+
+const int living = 5;
+const int bathroom = 6;
+const int closet = 7;
+//This function runs automatically when Arduino receives a message from MQT
+void callback(char* topic, byte* payload, unsigned int length) {
+//Reading message, converts mqtt message into readable text 
+  String msg = "";
+
+  for (int i = 0; i < length; i++) {
+    msg += (char)payload[i];
+  }
+
+  Serial.println(msg);
+
+  if (msg == "livingON") digitalWrite(living, HIGH);
+  if (msg == "livingOFF") digitalWrite(living, LOW);
+
+  if (msg == "bathON") digitalWrite(bathroom, HIGH);
+  if (msg == "bathOFF") digitalWrite(bathroom, LOW);
+
+  if (msg == "closetON") digitalWrite(closet, HIGH);
+  if (msg == "closetOFF") digitalWrite(closet, LOW);
+}
+//If Arduino loses connection, this reconnects it to MQTT.
+
+void reconnect() {
+
+  while (!client.connected()) {
+
+    if (client.connect("arduinoClient123"))//If Arduino loses connection, this reconnects it to MQTT.
+ {
+
+      client.subscribe("linda/home");//Arduino logs into MQTT server.
+
+
+    } else {
+      delay(2000);
+    }
+  }
+}
 
 void setup() {
 
   Serial.begin(9600);
-  delay(1500);
 
-  pinMode(livingRoomPin, OUTPUT);
-  pinMode(bathroomPin, OUTPUT);
-  pinMode(closetPin, OUTPUT);
+  pinMode(living, OUTPUT);
+  pinMode(bathroom, OUTPUT);
+  pinMode(closet, OUTPUT);
 
-  digitalWrite(livingRoomPin, LOW);
-  digitalWrite(bathroomPin, LOW);
-  digitalWrite(closetPin, LOW);
+  WiFi.begin(ssid, pass);
 
-  initProperties();
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+  }
 
-  ArduinoCloud.begin(ArduinoIoTPreferredConnection);
-
-  Serial.println("Arduino Cloud Connected");
+  client.setServer(mqttServer, 1883);
+  client.setCallback(callback);
 }
 
 void loop() {
-  ArduinoCloud.update();
-}
 
-/*
-  CALLBACK FUNCTIONS (Triggered automatically by Cloud)
-*/
+  if (!client.connected()) {
+    reconnect();
+  }
 
-void onLivingRoomChange() {
-
-  digitalWrite(livingRoomPin, livingRoom);
-
-  Serial.println("BACKEND UPDATE → Living Room");
-
-  if (livingRoom)
-    Serial.println("Living Room LED: ON");
-  else
-    Serial.println("Living Room LED: OFF");
-}
-
-void onBathroomChange() {
-
-  digitalWrite(bathroomPin, bathroom);
-
-  Serial.println("BACKEND UPDATE → Bathroom");
-
-  if (bathroom)
-    Serial.println("Bathroom LED: ON");
-  else
-    Serial.println("Bathroom LED: OFF");
-}
-
-void onClosetChange() {
-
-  digitalWrite(closetPin, closet);
-
-  Serial.println("BACKEND UPDATE → Closet");
-
-  if (closet)
-    Serial.println("Closet LED: ON");
-  else
-    Serial.println("Closet LED: OFF");
+  client.loop();
 }
