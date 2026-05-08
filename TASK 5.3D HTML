@@ -1,40 +1,56 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>LED Control (Cloud Version)</title>
+  <title>Smart Home Control (Cloud System)</title>
 
   <script>
-    // NOTE: No direct Arduino IP used anymore
-    // Control happens via Arduino IoT Cloud dashboard OR mobile/web cloud panel
 
-    function toggleButton(button, ledName) {
-      const state = button.checked ? "ON" : "OFF";
+    function toggleRoom(room, state) {
 
-      console.log("Request sent to Cloud:");
-      console.log("LED:", ledName, "State:", state);
+      // This represents frontend interaction
+      console.log("Web UI Triggered:");
+      console.log(room + " = " + state);
 
       alert(
-        "Cloud Update Sent:\n" +
-        ledName + " → " + state + "\n\n" +
-        "This would update Arduino IoT Cloud variable."
+        "Send this value to Arduino Cloud Dashboard:\n\n" +
+        room + " = " + state +
+        "\n\nCloud backend will update Arduino automatically."
       );
+
+     
     }
+
   </script>
 </head>
 
 <body>
 
-<h1>Arduino LED Control (Cloud-Based)</h1>
-
-<p><b>Note:</b> This system uses Arduino IoT Cloud backend instead of direct IP control.</p>
+<h2>🏠 Smart Home Control System</h2>
 
 <label>
-  <input type="checkbox" id="livingRoom"
-    onclick="toggleButton(this, 'livingRoom')">
+  <input type="checkbox"
+         onclick="toggleRoom('livingRoom', this.checked)">
   Living Room
 </label>
-<br>
 
+<br><br>
+
+<label>
+  <input type="checkbox"
+         onclick="toggleRoom('bathroom', this.checked)">
+  Bathroom
+</label>
+
+<br><br>
+
+<label>
+  <input type="checkbox"
+         onclick="toggleRoom('closet', this.checked)">
+  Closet
+</label>
+
+</body>
+</html>
 <label>
   <input type="checkbox" id="bathroom"
     onclick="toggleButton(this, 'bathroom')">
