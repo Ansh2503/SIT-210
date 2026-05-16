@@ -1,0 +1,178 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// Pin Definitions based on your working layout
+#define TRIG_PIN 2
+#define ECHO_PIN 3
+#define GREEN_LED 4
+#define YELLOW_LED 5
+#define RED_LED 6
+#define BUZZER_PIN 7
+
+// Initialize LCD using your verified 0x27 address
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// Non-blocking time slice variables
+unsigned long lastSensorRead = 0;
+const long sensorInterval = 80; 
+unsigned long lastLcdUpdate = 0;
+const long lcdInterval = 300;    
+
+// Advanced Distinction Logic Variables
+int averageDistance = 0;
+bool sensorFaultTriggered = false;
+bool noTargetInView = false;
+const int NUM_READINGS = 5; 
+
+void setup() {
+  Serial.begin(9600);
+  
+  // Configure Actuator Pins
+  pinMode(TRIG_PIN, OUTPUT);
+  
+  // DISTINCTION HARDWARE FIX: Force the input pin to Ground when wire is pulled out
+  // Note: On some Nano 33 models, INPUT_PULLDOWN locks static to zero volts instantly.
+  pinMode(ECHO_PIN, INPUT_PULLDOWN); 
+  
+  pinMode(GREEN_LED, OUTPUT);
+  pinMode(YELLOW_LED, OUTPUT);
+  pinMode(RED_LED, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  
+  // EMERGENCY RECOVERY DELAYS
+  delay(1500);       
+  Wire.begin();      
+  delay(500);        
+  
+  lcd.init();        
+  delay(200);        
+  lcd.backlight();   
+  lcd.clear();       
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+
+  // 1. SENSING WITH NOISE REDUCTION & FLOATING PIN PROTECTION
+  if (currentMillis - lastSensorRead >= sensorInterval) {
+    lastSensorRead = currentMillis;
+    
+    long totalDuration = 0;
+    int validSamplesCount = 0;
+    int timeoutSamplesCount = 0;
+
+    for (int i = 0; i < NUM_READINGS; i++) {
+      digitalWrite(TRIG_PIN, LOW);
+      delayMicroseconds(2);
+      digitalWrite(TRIG_PIN, HIGH);
+      delayMicroseconds(10);
+      digitalWrite(TRIG_PIN, LOW);
+
+      // Timeout limits floating data confusion
+      long singleDuration = pulseIn(ECHO_PIN, HIGH, 15000); 
+      
+      if (singleDuration > 0) {
+        int checkDist = singleDuration * 0.034 / 2;
+        // Filter out impossible room values or floating pin noise
+        if (checkDist >= 2 && checkDist <= 400) {
+          totalDuration += singleDuration;
+          validSamplesCount++;
+        }
+      } else {
+        timeoutSamplesCount++;
+      }
+      delayMicroseconds(500); 
+    }
+
+    // STRICT FAULT DETECTION CRITERIA
+    // If the wire is pulled, the pin is locked LOW by INPUT_PULLDOWN. 
+    // This makes pulseIn read extreme out-of-bounds metrics or freeze completely.
+    if (validSamplesCount < 2 && timeoutSamplesCount < NUM_READINGS) {
+      // If we are getting weird erratic mixes of signals without a clean clear room, it is a fault
+      sensorFaultTriggered = true;
+      noTargetInView = false;
+    }
+    else if (timeoutSamplesCount == NUM_READINGS || (validSamplesCount == 0 && timeoutSamplesCount == 0)) {
+      // Clean open room timeout state
+      noTargetInView = true;
+      sensorFaultTriggered = false;
+      averageDistance = 999; 
+    } 
+    else {
+      // Normal reading state
+      sensorFaultTriggered = false;
+      noTargetInView = false;
+      long averageDuration = totalDuration / validSamplesCount;
+      averageDistance = averageDuration * 0.034 / 2;
+    }
+  }
+
+  // 2. DATA OUTPUT & EXPLICIT FAULT HANDLING
+  if (currentMillis - lastLcdUpdate >= lcdInterval) {
+    lastLcdUpdate = currentMillis;
+    lcd.clear();
+    
+    // --- DISTINCTION ERROR HANDLING: WIRE DISCONNECTION SUCCESSFUL ---
+    if (sensorFaultTriggered) {
+      Serial.println("CRITICAL FAULT: Echo Data Line Broken!");
+      
+      lcd.setCursor(0, 0);
+      lcd.print("SENSOR ERROR!   ");
+      lcd.setCursor(0, 1);
+      lcd.print("Check Pins D2/D3");
+
+      digitalWrite(GREEN_LED, LOW);
+      digitalWrite(YELLOW_LED, LOW);
+      digitalWrite(RED_LED, LOW);
+      noTone(BUZZER_PIN);
+    } 
+    // --- NORMAL OPERATION: CLEAN ROOM STATE (NO OBJECT) ---
+    else if (noTargetInView || averageDistance > 150) {
+      Serial.println("Status: Path Clear. Scanning...");
+      
+      lcd.setCursor(0, 0);
+      lcd.print("Target Status:  ");
+      lcd.setCursor(0, 1);
+      lcd.print("Scanning...     ");
+
+      digitalWrite(GREEN_LED, HIGH);
+      digitalWrite(YELLOW_LED, LOW);
+      digitalWrite(RED_LED, LOW);
+      noTone(BUZZER_PIN);
+    }
+    // --- NORMAL OPERATION: OBSTACLE TRACKING STATE ---
+    else {
+      Serial.print("Smoothed Distance: ");
+      Serial.print(averageDistance);
+      Serial.println(" cm");
+
+      lcd.setCursor(0, 0);
+      lcd.print("Target Status:  ");
+      lcd.setCursor(0, 1);
+      lcd.print(averageDistance);
+      lcd.print(" cm (Smoothed) "); 
+
+      if (averageDistance > 30) {
+        digitalWrite(GREEN_LED, HIGH);
+        digitalWrite(YELLOW_LED, LOW);
+        digitalWrite(RED_LED, LOW);
+        noTone(BUZZER_PIN);
+      } 
+      else if (averageDistance <= 30 && averageDistance > 10) {
+        digitalWrite(GREEN_LED, LOW);
+        digitalWrite(YELLOW_LED, HIGH);
+        digitalWrite(RED_LED, LOW);
+        
+        tone(BUZZER_PIN, 1000);
+        delay(50);
+        noTone(BUZZER_PIN);
+      } 
+      else {
+        digitalWrite(GREEN_LED, LOW);
+        digitalWrite(YELLOW_LED, LOW);
+        digitalWrite(RED_LED, HIGH);
+        tone(BUZZER_PIN, 1600); 
+      }
+    }
+  }
+}
