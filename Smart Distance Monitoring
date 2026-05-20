@@ -49,7 +49,7 @@ const int NUM_READINGS     = 5;
 // currentZone  - current operating state
 // previousZone - previous operating state
 // zoneStartTime - how long system stayed in previous zone
-// ==========================================================
+
 String currentZone = "STARTUP";
 String previousZone = "";
 unsigned long zoneStartTime = 0;
