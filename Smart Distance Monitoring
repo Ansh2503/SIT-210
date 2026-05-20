@@ -1,178 +1,472 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
-// Pin Definitions based on your working layout
-#define TRIG_PIN 2
-#define ECHO_PIN 3
-#define GREEN_LED 4
-#define YELLOW_LED 5
-#define RED_LED 6
-#define BUZZER_PIN 7
+// PIN DEFINITIONS
+// We are using named constants instead of raw pin numbers 
 
-// Initialize LCD using your verified 0x27 address
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+#define TRIG_PIN    2
+#define ECHO_PIN    3
+#define GREEN_LED   4
+#define YELLOW_LED  5
+#define RED_LED     6
+#define BUZZER_PIN  7
 
-// Non-blocking time slice variables
+// LCD SETUP
+// LCD uses I2C communication, which reduces wiring because
+// it only needs SDA and SCL signal lines.
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // 
+
+// NON-BLOCKING TIMING VARIABLES
+// Instead of using delay(), millis() is used so multiple
+// parts of the system can run "at the same time" without
+// freezing the Arduino.
+// Sensor readings happen every 80ms
+// LCD/output updates happen every 300ms
+
 unsigned long lastSensorRead = 0;
-const long sensorInterval = 80; 
-unsigned long lastLcdUpdate = 0;
-const long lcdInterval = 300;    
+const long sensorInterval    = 80;
 
-// Advanced Distinction Logic Variables
-int averageDistance = 0;
-bool sensorFaultTriggered = false;
-bool noTargetInView = false;
-const int NUM_READINGS = 5; 
+unsigned long lastLcdUpdate  = 0;
+const long lcdInterval       = 300;
+
+// STATE VARIABLES
+// These variables store the current system condition.
+//
+// averageDistance - smoothed sensor reading
+// sensorFaultTriggered - true if sensor wiring fault detected
+// noTargetInView       - true if room is empty/no object
+
+int  averageDistance       = 0;
+bool sensorFaultTriggered  = false;
+bool noTargetInView        = false;
+
+const int NUM_READINGS     = 5;
+
+
+// SERIAL LOGGING VARIABLES
+// Helps with  structured logging and zone transition
+// currentZone  - current operating state
+// previousZone - previous operating state
+// zoneStartTime - how long system stayed in previous zone
+// ==========================================================
+String currentZone = "STARTUP";
+String previousZone = "";
+unsigned long zoneStartTime = 0;
+
+
+// SETUP
+
 
 void setup() {
+
+  
   Serial.begin(9600);
+
   
-  // Configure Actuator Pins
-  pinMode(TRIG_PIN, OUTPUT);
+  // PIN CONFIGURATION
   
-  // DISTINCTION HARDWARE FIX: Force the input pin to Ground when wire is pulled out
-  // Note: On some Nano 33 models, INPUT_PULLDOWN locks static to zero volts instantly.
-  pinMode(ECHO_PIN, INPUT_PULLDOWN); 
-  
-  pinMode(GREEN_LED, OUTPUT);
+  pinMode(TRIG_PIN,   OUTPUT);
+
+  // INPUT_PULLDOWN is important for fault tolerance.
+  // If the echo wire disconnects, the pin is pulled LOW
+  // instead of floating randomly.
+  pinMode(ECHO_PIN,   INPUT_PULLDOWN);
+
+  pinMode(GREEN_LED,  OUTPUT);
   pinMode(YELLOW_LED, OUTPUT);
-  pinMode(RED_LED, OUTPUT);
+  pinMode(RED_LED,    OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
+
+
+  // STARTUP STABILISATION
+  // Small delays help power rails and peripherals stabilise
+  // before communication begins.
+ 
+  delay(1500);
+
+  Wire.begin();
+
+  delay(500);
+
+  lcd.init();
+
+  delay(200);
+
+  lcd.backlight();
+  lcd.clear();
+
   
-  // EMERGENCY RECOVERY DELAYS
-  delay(1500);       
-  Wire.begin();      
-  delay(500);        
+  // SYSTEM STARTUP LOGGING
+  // Makes internal behaviour visible during testing.
   
-  lcd.init();        
-  delay(200);        
-  lcd.backlight();   
-  lcd.clear();       
+  Serial.println("===========================================");
+  Serial.println("  Smart Distance Monitoring System");
+  Serial.println("  SIT210 Embedded Systems Development");
+  Serial.println("===========================================");
+
+  Serial.println("[SYSTEM] Startup complete. Entering main loop.");
+
+  Serial.println("[LOG] Timestamp(ms) | Zone       | Distance(cm) | Event");
+
+  Serial.println("-------------------------------------------");
 }
 
-void loop() {
-  unsigned long currentMillis = millis();
 
-  // 1. SENSING WITH NOISE REDUCTION & FLOATING PIN PROTECTION
-  if (currentMillis - lastSensorRead >= sensorInterval) {
-    lastSensorRead = currentMillis;
+// SENSING LAYER
+// This function:
+// 1. Fires ultrasonic pulses
+// 2. Collects 5 readings
+// 3. Filters invalid readings
+// 4. Performs averaging/smoothing
+// 5. Detects hardware faults
+//
+// This separation is part of the modular architecture.
+
+void runSensingLayer() {
+
+  long totalDuration       = 0;
+
+  int validSamplesCount    = 0;
+
+  int timeoutSamplesCount  = 0;
+
+  
+  // TAKE MULTIPLE READINGS
+  // Multiple readings reduce noise and improve reliability.
+  
+  for (int i = 0; i < NUM_READINGS; i++) {
+
+    // Trigger ultrasonic pulse
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
+
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+
+    digitalWrite(TRIG_PIN, LOW);
+
+   
+    // pulseIn waits for echo return.
+    // 15000us timeout prevents the Arduino from freezing
+    // forever if no echo returns.
     
-    long totalDuration = 0;
-    int validSamplesCount = 0;
-    int timeoutSamplesCount = 0;
+    long singleDuration = pulseIn(ECHO_PIN, HIGH, 15000);
 
-    for (int i = 0; i < NUM_READINGS; i++) {
-      digitalWrite(TRIG_PIN, LOW);
-      delayMicroseconds(2);
-      digitalWrite(TRIG_PIN, HIGH);
-      delayMicroseconds(10);
-      digitalWrite(TRIG_PIN, LOW);
+    
+    // VALID READING
+    
+    if (singleDuration > 0) {
 
-      // Timeout limits floating data confusion
-      long singleDuration = pulseIn(ECHO_PIN, HIGH, 15000); 
-      
-      if (singleDuration > 0) {
-        int checkDist = singleDuration * 0.034 / 2;
-        // Filter out impossible room values or floating pin noise
-        if (checkDist >= 2 && checkDist <= 400) {
-          totalDuration += singleDuration;
-          validSamplesCount++;
-        }
-      } else {
-        timeoutSamplesCount++;
+      int checkDist = singleDuration * 0.034 / 2;
+
+      // Ignore impossible/noisy readings outside sensor range
+      if (checkDist >= 2 && checkDist <= 400) {
+
+        totalDuration += singleDuration;
+
+        validSamplesCount++;
       }
-      delayMicroseconds(500); 
+
+    } else {
+
+      // No echo returned before timeout
+      timeoutSamplesCount++;
     }
 
-    // STRICT FAULT DETECTION CRITERIA
-    // If the wire is pulled, the pin is locked LOW by INPUT_PULLDOWN. 
-    // This makes pulseIn read extreme out-of-bounds metrics or freeze completely.
-    if (validSamplesCount < 2 && timeoutSamplesCount < NUM_READINGS) {
-      // If we are getting weird erratic mixes of signals without a clean clear room, it is a fault
-      sensorFaultTriggered = true;
-      noTargetInView = false;
-    }
-    else if (timeoutSamplesCount == NUM_READINGS || (validSamplesCount == 0 && timeoutSamplesCount == 0)) {
-      // Clean open room timeout state
-      noTargetInView = true;
-      sensorFaultTriggered = false;
-      averageDistance = 999; 
-    } 
-    else {
-      // Normal reading state
-      sensorFaultTriggered = false;
-      noTargetInView = false;
-      long averageDuration = totalDuration / validSamplesCount;
-      averageDistance = averageDuration * 0.034 / 2;
-    }
+    // Tiny delay between readings
+    delayMicroseconds(500);
   }
 
-  // 2. DATA OUTPUT & EXPLICIT FAULT HANDLING
-  if (currentMillis - lastLcdUpdate >= lcdInterval) {
-    lastLcdUpdate = currentMillis;
-    lcd.clear();
+  // FAULT TOLERANCE / DECISION LOGIC
+  
+  // The code distinguishes between:
+  // - Empty room
+  // - Broken/disconnected sensor
+  
+  // by analysing timeout patterns.
+  
+  // SENSOR FAULT DETECTED
+  // Mixed inconsistent signals usually indicate:
+  // - loose wire
+  // - disconnected echo pin
+  // - unstable sensor behaviour
+
+  if (validSamplesCount < 2 &&
+      timeoutSamplesCount < NUM_READINGS) {
+
+    sensorFaultTriggered = true;
+
+    noTargetInView = false;
+  }
+
+ 
+  // EMPTY ROOM DETECTED
+  // All 5 readings timed out cleanly.
+  // This means:
+  // - sensor is working
+  // - no object is in range
+  
+  else if (timeoutSamplesCount == NUM_READINGS) {
+
+    noTargetInView = true;
+
+    sensorFaultTriggered = false;
+
+    averageDistance = 999;
+  }
+
+  
+  // NORMAL OPERATION
+  //
+  // Calculate average distance from valid readings.
+  // This acts like a moving-average filter and smooths
+  // noisy ultrasonic measurements.
+  else {
+
+    sensorFaultTriggered = false;
+
+    noTargetInView = false;
+
+    long avgDuration = totalDuration / validSamplesCount;
+
+    averageDistance = avgDuration * 0.034 / 2;
+  }
+}
+
+
+// SERIAL LOGGING SYSTEM
+// This provides structured runtime diagnostics.
+// Instead of only watching LEDs, we can observe:
+// - timestamps
+// - zone changes
+// - sensor states
+// - time spent in each zone
+// This improves observability and testing.
+// ==========================================================
+void logData(String zone, int distance, String event) {
+
+  unsigned long ts = millis();
+
+  Serial.print("[LOG] ");
+
+  Serial.print(ts);
+
+  Serial.print("ms | ");
+
+  // Pad spacing so Serial output aligns neatly
+  String paddedZone = zone;
+
+  while (paddedZone.length() < 10)
+    paddedZone += " ";
+
+  Serial.print(paddedZone);
+
+  Serial.print(" | ");
+
+  // Display "---" when no target exists
+  if (distance == 999) {
+
+    Serial.print("---        ");
+
+  } else {
+
+    Serial.print(distance);
+
+    Serial.print(" cm      ");
+  }
+
+  Serial.print("  | ");
+
+  Serial.println(event);
+
+  // ZONE TRANSITION TRACKING
+  // Logs when system changes state and how long it stayed
+  // in the previous zone.
+  if (zone != previousZone) {
+
+    if (previousZone != "") {
+
+      unsigned long duration = ts - zoneStartTime;
+
+      Serial.print("[TRANSITION] ");
+
+      Serial.print(previousZone);
+
+      Serial.print(" --> ");
+
+      Serial.print(zone);
+
+      Serial.print("  (spent ");
+
+      Serial.print(duration);
+
+      Serial.println("ms in previous zone)");
+    }
+
+    previousZone  = zone;
+
+    zoneStartTime = ts;
+  }
+}
+
+// OUTPUT LAYER
+//
+// Controls:
+// - LCD
+// - LEDs
+// - buzzer
+//
+// This layer only handles outputs.
+// It does NOT read sensors.
+//
+// This separation improves maintainability.
+void runOutputLayer() {
+
+  lcd.clear();
+
+  // FAULT STATE
+  if (sensorFaultTriggered) {
+
+    lcd.setCursor(0, 0);
+    lcd.print("SENSOR ERROR!   ");
+
+    lcd.setCursor(0, 1);
+    lcd.print("Check Pins D2/D3");
+
+    // Turn all LEDs off during hardware fault
+    digitalWrite(GREEN_LED,  LOW);
+    digitalWrite(YELLOW_LED, LOW);
+    digitalWrite(RED_LED,    LOW);
+
+    noTone(BUZZER_PIN);
+
+    currentZone = "FAULT";
+
+    logData("FAULT", 0,
+      "Sensor fault detected — check echo wire on D3");
+  }
+
+  // SCANNING / EMPTY ROOM STATE
+  else if (noTargetInView || averageDistance > 150) {
+
+    lcd.setCursor(0, 0);
+    lcd.print("Target Status:  ");
+
+    lcd.setCursor(0, 1);
+    lcd.print("Scanning...     ");
+
+    digitalWrite(GREEN_LED,  HIGH);
+    digitalWrite(YELLOW_LED, LOW);
+    digitalWrite(RED_LED,    LOW);
+
+    noTone(BUZZER_PIN);
+
+    currentZone = "SCANNING";
+
+    logData("SCANNING",
+      averageDistance,
+      "No object in range");
+  }
+
+ 
+  // OBJECT DETECTED
+  else {
+
+    lcd.setCursor(0, 0);
+    lcd.print("Target Status:  ");
+
+    lcd.setCursor(0, 1);
+
+    lcd.print(averageDistance);
+
+    lcd.print(" cm (Smoothed) ");
+
+    // SAFE ZONE
+   
+    if (averageDistance > 30) {
+
+      digitalWrite(GREEN_LED,  HIGH);
+      digitalWrite(YELLOW_LED, LOW);
+      digitalWrite(RED_LED,    LOW);
+
+      noTone(BUZZER_PIN);
+
+      currentZone = "SAFE";
+
+      logData("SAFE",
+        averageDistance,
+        "Object in safe zone");
+    }
+    // WARNING ZONE
     
-    // --- DISTINCTION ERROR HANDLING: WIRE DISCONNECTION SUCCESSFUL ---
-    if (sensorFaultTriggered) {
-      Serial.println("CRITICAL FAULT: Echo Data Line Broken!");
-      
-      lcd.setCursor(0, 0);
-      lcd.print("SENSOR ERROR!   ");
-      lcd.setCursor(0, 1);
-      lcd.print("Check Pins D2/D3");
+    else if (averageDistance > 10) {
 
-      digitalWrite(GREEN_LED, LOW);
-      digitalWrite(YELLOW_LED, LOW);
-      digitalWrite(RED_LED, LOW);
-      noTone(BUZZER_PIN);
-    } 
-    // --- NORMAL OPERATION: CLEAN ROOM STATE (NO OBJECT) ---
-    else if (noTargetInView || averageDistance > 150) {
-      Serial.println("Status: Path Clear. Scanning...");
-      
-      lcd.setCursor(0, 0);
-      lcd.print("Target Status:  ");
-      lcd.setCursor(0, 1);
-      lcd.print("Scanning...     ");
+      digitalWrite(GREEN_LED,  LOW);
+      digitalWrite(YELLOW_LED, HIGH);
+      digitalWrite(RED_LED,    LOW);
 
-      digitalWrite(GREEN_LED, HIGH);
-      digitalWrite(YELLOW_LED, LOW);
-      digitalWrite(RED_LED, LOW);
+      // Short warning beep
+      tone(BUZZER_PIN, 1000);
+
+      delay(50);
+
       noTone(BUZZER_PIN);
+
+      currentZone = "WARNING";
+
+      logData("WARNING",
+        averageDistance,
+        "Object in warning zone — caution");
     }
-    // --- NORMAL OPERATION: OBSTACLE TRACKING STATE ---
+
+    // DANGER ZONE
+    
     else {
-      Serial.print("Smoothed Distance: ");
-      Serial.print(averageDistance);
-      Serial.println(" cm");
 
-      lcd.setCursor(0, 0);
-      lcd.print("Target Status:  ");
-      lcd.setCursor(0, 1);
-      lcd.print(averageDistance);
-      lcd.print(" cm (Smoothed) "); 
+      digitalWrite(GREEN_LED,  LOW);
+      digitalWrite(YELLOW_LED, LOW);
+      digitalWrite(RED_LED,    HIGH);
 
-      if (averageDistance > 30) {
-        digitalWrite(GREEN_LED, HIGH);
-        digitalWrite(YELLOW_LED, LOW);
-        digitalWrite(RED_LED, LOW);
-        noTone(BUZZER_PIN);
-      } 
-      else if (averageDistance <= 30 && averageDistance > 10) {
-        digitalWrite(GREEN_LED, LOW);
-        digitalWrite(YELLOW_LED, HIGH);
-        digitalWrite(RED_LED, LOW);
-        
-        tone(BUZZER_PIN, 1000);
-        delay(50);
-        noTone(BUZZER_PIN);
-      } 
-      else {
-        digitalWrite(GREEN_LED, LOW);
-        digitalWrite(YELLOW_LED, LOW);
-        digitalWrite(RED_LED, HIGH);
-        tone(BUZZER_PIN, 1600); 
-      }
+      // Higher frequency sounds more urgent
+      tone(BUZZER_PIN, 1600);
+
+      currentZone = "DANGER";
+
+      logData("DANGER",
+        averageDistance,
+        "*** OBJECT TOO CLOSE ***");
     }
+  }
+}
+
+
+// MAIN LOOP
+// The loop runs forever.
+// Two independent millis()-based tasks are scheduled:
+// 1. Sensing layer  - every 80ms
+// 2. Output layer   - every 300ms
+// Because delay() is avoided, the system behaves like a
+// small real-time multitasking embedded system.
+void loop() {
+
+  unsigned long currentMillis = millis();
+
+  // TASK 1: SENSOR PROCESSING
+  if (currentMillis - lastSensorRead >= sensorInterval) {
+
+    lastSensorRead = currentMillis;
+
+    runSensingLayer();
+  }
+
+  
+  // TASK 2: OUTPUT PROCESSING
+  
+  if (currentMillis - lastLcdUpdate >= lcdInterval) {
+
+    lastLcdUpdate = currentMillis;
+
+    runOutputLayer();
   }
 }
