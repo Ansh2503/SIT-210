@@ -131,6 +131,14 @@ void runSensingLayer() {
 
   int timeoutSamplesCount  = 0;
 
+  // PRE-TRIGGER ECHO PIN STATE CHECK
+  // Read echo pin before firing any pulse.
+  // A disconnected pin held LOW by INPUT_PULLDOWN will read
+  // LOW here. A connected sensor will have its echo pin in
+  // an idle HIGH or transitioning state during operation.
+  // This lets us distinguish a dead wire from an empty room.
+  bool echoPinStuckLow = (digitalRead(ECHO_PIN) == LOW);
+
   
   // TAKE MULTIPLE READINGS
   // Multiple readings reduce noise and improve reliability.
@@ -184,16 +192,31 @@ void runSensingLayer() {
   // - Empty room
   // - Broken/disconnected sensor
   
-  // by analysing timeout patterns.
-  
-  // SENSOR FAULT DETECTED
-  // Mixed inconsistent signals usually indicate:
-  // - loose wire
-  // - disconnected echo pin
-  // - unstable sensor behaviour
+  // by analysing timeout patterns combined with the
+  // pre-trigger echo pin state.
 
-  if (validSamplesCount < 2 &&
-      timeoutSamplesCount < NUM_READINGS) {
+  // SENSOR FAULT DETECTED
+  // Two conditions trigger a fault:
+  //
+  // 1. Mixed inconsistent signals (some timeouts, some valid
+  //    but too few valid readings) usually indicate:
+  //    - loose wire
+  //    - disconnected echo pin
+  //    - unstable sensor behaviour
+  //
+  // 2. All readings timed out AND echo pin was already LOW
+  //    before any pulse was fired. This means the pin is
+  //    being held LOW by INPUT_PULLDOWN — i.e. D3 is
+  //    physically unplugged. A working sensor aimed at open
+  //    space will still briefly drive the echo pin HIGH
+  //    during operation, so echoPinStuckLow catches the
+  //    disconnected wire case that timeout counting alone
+  //    cannot distinguish from an empty room.
+
+  if ((validSamplesCount < 2 &&
+       timeoutSamplesCount < NUM_READINGS) ||
+      (timeoutSamplesCount == NUM_READINGS &&
+       echoPinStuckLow)) {
 
     sensorFaultTriggered = true;
 
@@ -202,7 +225,8 @@ void runSensingLayer() {
 
  
   // EMPTY ROOM DETECTED
-  // All 5 readings timed out cleanly.
+  // All 5 readings timed out cleanly AND the echo pin was
+  // responsive before the pulse (not stuck LOW).
   // This means:
   // - sensor is working
   // - no object is in range
