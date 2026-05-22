@@ -1,0 +1,297 @@
+
+// ARDUINO 1 — SENSING UNIT ( near the wall / garage)
+// Reads HC-SR04 sensor + controls buzzer
+// Sends distance and zone data to MQTT broker over WiFi
+
+
+#include <SPI.h>
+#include <WiFiNINA.h>
+#include <ArduinoMqttClient.h>
+
+//  WiFi credentials 
+const char WIFI_SSID[] = "2002/33_Rose_Lane";
+const char WIFI_PASS[] = "H@Dc!#G2Q9XcnJ63";
+
+//  MQTT broker 
+const char MQTT_BROKER[] = "broker.hivemq.com";
+const int  MQTT_PORT     = 1883;
+
+const char TOPIC_DISTANCE[] = "sit210_Task11.1/distance";
+const char TOPIC_ZONE[]     = "sit210_Task11.1/zone";
+
+// Pin definitions 
+#define TRIG_PIN    2
+#define ECHO_PIN    3
+#define BUZZER_PIN  7
+
+// Timing 
+unsigned long lastSensorRead = 0;
+const long sensorInterval    = 80;
+
+unsigned long lastPublish    = 0;
+const long publishInterval   = 300;
+
+//  Sensor state 
+int    averageDistance      = 0;
+bool   sensorFaultTriggered = false;
+bool   noTargetInView       = false;
+String faultPin             = "";
+const int NUM_READINGS      = 5;
+String currentZone          = "SCANNING";
+
+// All-timeout streak counter 
+// Counts consecutive cycles where ALL 5 readings timed out
+// AND the echo pin never went HIGH at all during any pulse.
+//
+// Empty room:   the HC-SR04 still fires an echo pulse even
+//               when nothing is in range — pulseIn will
+//               catch it going HIGH briefly before timeout.
+//               So the "never went HIGH" streak resets often.
+//
+// D3 unplugged: INPUT_PULLDOWN holds the pin LOW forever.
+//               pulseIn never sees a HIGH, and this streak
+//               climbs every single cycle until confirmed.
+//
+// This is the only reliable distinction between the two
+// cases that doesn't depend on pre-pulse pin state noise.
+const int NO_ECHO_CONFIRM = 10;   // ~800ms at 80ms/cycle
+int       noEchoStreak    = 0;
+
+// D2 fault debounce 
+const int FAULT_CONFIRM_COUNT = 5;
+int       faultConsecutive    = 0;
+
+// WiFi and MQTT clients 
+WiFiClient wifiClient;
+MqttClient mqttClient(wifiClient);
+
+// 
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(TRIG_PIN,   OUTPUT);
+  pinMode(ECHO_PIN,   INPUT_PULLDOWN);
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  Serial.println("=== SENSING UNIT STARTING ===");
+
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(WIFI_SSID);
+
+  while (WiFi.begin(WIFI_SSID, WIFI_PASS) != WL_CONNECTED) {
+    Serial.print(".");
+    delay(1000);
+  }
+
+  Serial.println();
+  Serial.print("WiFi connected. IP: ");
+  Serial.println(WiFi.localIP());
+
+  Serial.print("Connecting to MQTT broker: ");
+  Serial.println(MQTT_BROKER);
+
+  while (!mqttClient.connect(MQTT_BROKER, MQTT_PORT)) {
+    Serial.print("MQTT connection failed. Error: ");
+    Serial.println(mqttClient.connectError());
+    delay(2000);
+  }
+
+  Serial.println("MQTT connected.");
+  Serial.println("Sensing unit ready. Publishing data...");
+}
+
+
+// SENSING LAYER
+//
+// How fault detection works:
+//
+//  NORMAL  — at least 2 valid distance readings received.
+//
+//  EMPTY   — all 5 timed out BUT at least one pulse caused
+//            the echo pin to go HIGH (even briefly before
+//            timeout). The sensor is alive, room is empty.
+//
+//  FAULT D3 — all 5 timed out AND echo pin NEVER went HIGH
+//             across NO_ECHO_CONFIRM consecutive cycles.
+//             D3 is physically unplugged — INPUT_PULLDOWN
+//             holds it LOW and pulseIn never fires.
+//
+//  FAULT D2 — mixed result (some timeouts, < 2 valid).
+//             Trigger signal is not reaching the sensor.
+//             D2 is loose or unplugged.
+
+void runSensingLayer() {
+  long totalDuration       = 0;
+  int  validSamplesCount   = 0;
+  int  timeoutSamplesCount = 0;
+  bool echoWentHighThisCycle = false;
+
+  for (int i = 0; i < NUM_READINGS; i++) {
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+
+    // Extended timeout - gives time to detect a HIGH even
+    // when no object is in range (empty room echo still
+    // briefly pulses the pin before dying out)
+    long singleDuration = pulseIn(ECHO_PIN, HIGH, 25000);
+
+    if (singleDuration > 0) {
+      // Echo pin went HIGH — sensor is definitely alive
+      echoWentHighThisCycle = true;
+
+      int checkDist = singleDuration * 0.034 / 2;
+      if (checkDist >= 2 && checkDist <= 400) {
+        totalDuration += singleDuration;
+        validSamplesCount++;
+      }
+    } else {
+      timeoutSamplesCount++;
+      // Even a timeout can mean the pin went HIGH then LOW
+      // before pulseIn returned — but we only flag HIGH
+      // when pulseIn actually caught a duration > 0
+    }
+
+    delayMicroseconds(500);
+  }
+
+  // CLASSIFICATION 
+
+  if (validSamplesCount >= 2) {
+    //  NORMAL 
+    noEchoStreak         = 0;
+    faultConsecutive     = 0;
+    sensorFaultTriggered = false;
+    noTargetInView       = false;
+    faultPin             = "";
+    long avgDuration     = totalDuration / validSamplesCount;
+    averageDistance      = avgDuration * 0.034 / 2;
+
+  } else if (timeoutSamplesCount == NUM_READINGS) {
+    // ALL 5 TIMED OUT 
+    // Distinguish empty room from D3 unplugged by whether
+    // the echo pin ever went HIGH during this cycle.
+    faultConsecutive = 0;
+
+    if (echoWentHighThisCycle) {
+      // Echo pin fired — sensor is alive, just no object
+      noEchoStreak         = 0;
+      sensorFaultTriggered = false;
+      noTargetInView       = true;
+      faultPin             = "";
+      averageDistance      = 999;
+    } else {
+      // Echo pin never went HIGH after trigger pulses
+      // Count up — if this persists it's a pulled wire
+      noEchoStreak++;
+
+      if (noEchoStreak >= NO_ECHO_CONFIRM) {
+        // Confirmed D3 unplugged
+        sensorFaultTriggered = true;
+        noTargetInView       = false;
+        faultPin             = "D3";
+        Serial.println("[FAULT] Confirmed — Check sensor pin D3 (ECHO)");
+      } else {
+        // Not confirmed yet — stay as SCANNING
+        sensorFaultTriggered = false;
+        noTargetInView       = true;
+        faultPin             = "";
+        averageDistance      = 999;
+      }
+    }
+
+  } else {
+    //  MIXED RESULT 
+    // Some timeouts, fewer than 2 valid — D2 likely loose
+    noEchoStreak = 0;
+    faultConsecutive++;
+
+    if (faultConsecutive >= FAULT_CONFIRM_COUNT) {
+      sensorFaultTriggered = true;
+      noTargetInView       = false;
+      faultPin             = "D2";
+      Serial.println("[FAULT] Confirmed — Check sensor pin D2 (TRIG)");
+    }
+    // Not yet confirmed — keep previous state
+  }
+}
+
+
+// BUZZER CONTROL
+void runBuzzer(String zone) {
+  if (zone == "WARNING") {
+    tone(BUZZER_PIN, 1000, 50);
+  } else if (zone == "DANGER") {
+    tone(BUZZER_PIN, 1600);
+  } else {
+    noTone(BUZZER_PIN);
+  }
+}
+
+
+// DETERMINE ZONE
+
+String getZone() {
+  if (sensorFaultTriggered)                    return "FAULT";
+  if (noTargetInView || averageDistance > 150) return "SCANNING";
+  if (averageDistance > 30)                    return "SAFE";
+  if (averageDistance > 10)                    return "WARNING";
+  return "DANGER";
+}
+
+
+// PUBLISH TO MQTT
+
+void publishData(String zone, int distance) {
+  mqttClient.poll();
+
+  if (!mqttClient.connected()) {
+    Serial.println("MQTT disconnected. Reconnecting...");
+    while (!mqttClient.connect(MQTT_BROKER, MQTT_PORT)) {
+      delay(1000);
+    }
+    Serial.println("MQTT reconnected.");
+  }
+
+  mqttClient.beginMessage(TOPIC_DISTANCE);
+  if (distance == 999) mqttClient.print("---");
+  else mqttClient.print(String(distance));
+  mqttClient.endMessage();
+
+  mqttClient.beginMessage(TOPIC_ZONE);
+  if (zone == "FAULT" && faultPin != "") {
+    mqttClient.print("FAULT:" + faultPin);
+  } else {
+    mqttClient.print(zone);
+  }
+  mqttClient.endMessage();
+
+  Serial.print("[PUBLISH] Zone: ");
+  Serial.print(zone);
+  if (zone == "FAULT" && faultPin != "") {
+    Serial.print(" | Check sensor pin " + faultPin);
+  }
+  Serial.print(" | Distance: ");
+  Serial.print(distance == 999 ? "---" : String(distance) + " cm");
+  Serial.print(" | Time: ");
+  Serial.print(millis());
+  Serial.println("ms");
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - lastSensorRead >= sensorInterval) {
+    lastSensorRead = currentMillis;
+    runSensingLayer();
+  }
+
+  if (currentMillis - lastPublish >= publishInterval) {
+    lastPublish = currentMillis;
+    currentZone = getZone();
+    runBuzzer(currentZone);
+    publishData(currentZone, averageDistance);
+  }
+}
