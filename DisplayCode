@@ -10,23 +10,25 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
-//  WiFi credentials 
+//WiFi credentials 
+// Must match exactly what you put in Arduino 1
 const char WIFI_SSID[] = "2002/33_Rose_Lane";
 const char WIFI_PASS[] = "H@Dc!#G2Q9XcnJ63";
 
-//  MQTT broker 
+// MQTT broker 
 const char MQTT_BROKER[] = "broker.hivemq.com";
 const int  MQTT_PORT     = 1883;
-//Topics
-const char TOPIC_DISTANCE[] = "sit210_Task11.1/distance";
-const char TOPIC_ZONE[]     = "sit210_Task11.1/zone";
+
+// Must match topics in Arduino 1
+const char TOPIC_DISTANCE[] = "sit210_student/distance";
+const char TOPIC_ZONE[]     = "sit210_student/zone";
 
 // Pin definitions 
 #define GREEN_LED   4
 #define YELLOW_LED  5
 #define RED_LED     6
 
-// LCD 
+//  LCD 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // State received from sensing unit 
@@ -35,14 +37,14 @@ String receivedDistance = "---";
 String faultPinReceived = "";   // "D2", "D3", or ""
 bool   newDataAvailable = false;
 
-// Timing 
+//  Timing 
 unsigned long lastDisplayUpdate = 0;
 const long displayInterval      = 300;
 
 unsigned long lastHeartbeat     = 0;
 const long heartbeatInterval    = 5000;
 
-// WiFi and MQTT 
+//  WiFi and MQTT 
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
 
@@ -118,6 +120,7 @@ void setup() {
 // MQTT MESSAGE HANDLER
 // Called automatically when a message arrives on a subscribed
 // topic.
+//
 // Zone payload format from sensing unit:
 //   Normal zones : "SCANNING", "SAFE", "WARNING", "DANGER"
 //   Fault zones  : "FAULT:D2" or "FAULT:D3"
@@ -157,6 +160,7 @@ void onMqttMessage(int messageSize) {
   Serial.println(payload);
 }
 
+
 // LED CONTROL
 
 void setLEDs(bool green, bool yellow, bool red) {
@@ -164,7 +168,6 @@ void setLEDs(bool green, bool yellow, bool red) {
   digitalWrite(YELLOW_LED, yellow ? HIGH : LOW);
   digitalWrite(RED_LED,    red    ? HIGH : LOW);
 }
-
 
 // DISPLAY UPDATE
 // Updates LCD and LEDs based on received zone.
