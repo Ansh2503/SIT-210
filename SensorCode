@@ -1,8 +1,20 @@
 
-// ARDUINO 1 — SENSING UNIT (goes near the wall / garage)
-// Reads HC-SR04 sensor + controls buzzer
-// Sends distance and zone data to MQTT broker over WiFi
-
+// ARDUINO 1 — SENSING UNIT
+// Location: Near wall / garage
+// Power: 9V battery connected to VIN pin (or 3xAA battery pack)
+//
+// Components on this unit:
+//   HC-SR04 ultrasonic sensor  (D2, D3)
+//   Passive buzzer              (D7)
+//   Green LED + 220 ohm         (D8)   <- NEW
+//   Yellow LED + 220 ohm        (D9)   <- NEW
+//   Red LED + 220 ohm           (D10)  <- NEW
+//
+// This unit operates independently even if WiFi drops.
+// Local LEDs and buzzer always reflect the current zone.
+// WiFi and MQTT are best-effort — if they fail the local
+// outputs continue working and a WiFi fault is displayed
+// via the LED pattern (all three flash together).
 
 
 #include <SPI.h>
@@ -13,26 +25,32 @@
 const char WIFI_SSID[] = "2002/33_Rose_Lane";
 const char WIFI_PASS[] = "H@Dc!#G2Q9XcnJ63";
 
-// ── MQTT broker ─────────────────────────────────────────────
+// MQTT broker 
 const char MQTT_BROKER[] = "broker.hivemq.com";
 const int  MQTT_PORT     = 1883;
 
-const char TOPIC_DISTANCE[] = "sit210_student/distance";
-const char TOPIC_ZONE[]     = "sit210_student/zone";
+const char TOPIC_DISTANCE[] = "sit210_Task11.1/distance";
+const char TOPIC_ZONE[]     = "sit210_Task11.1/zone";
 
-//Pin definitions 
-#define TRIG_PIN    2
-#define ECHO_PIN    3
-#define BUZZER_PIN  7
+// Pin definitions 
+#define TRIG_PIN     2
+#define ECHO_PIN     3
+#define BUZZER_PIN   7
+#define LED_GREEN    8    // NEW — local LED on sensing unit
+#define LED_YELLOW   9    // NEW — local LED on sensing unit
+#define LED_RED      10   // NEW — local LED on sensing unit
 
 //  Timing 
-unsigned long lastSensorRead = 0;
-const long sensorInterval    = 80;
+unsigned long lastSensorRead  = 0;
+const long    sensorInterval  = 80;
 
-unsigned long lastPublish    = 0;
-const long publishInterval   = 300;
+unsigned long lastPublish     = 0;
+const long    publishInterval = 300;
 
-// Sensor state 
+unsigned long lastWifiCheck   = 0;
+const long    wifiCheckInterval = 10000;  // check WiFi every 10s
+
+//  Sensor state 
 int    averageDistance      = 0;
 bool   sensorFaultTriggered = false;
 bool   noTargetInView       = false;
@@ -40,31 +58,22 @@ String faultPin             = "";
 const int NUM_READINGS      = 5;
 String currentZone          = "SCANNING";
 
-// All-timeout streak counter 
-// Counts consecutive cycles where ALL 5 readings timed out
-// AND the echo pin never went HIGH at all during any pulse.
-//
-// Empty room:   the HC-SR04 still fires an echo pulse even
-//               when nothing is in range — pulseIn will
-//               catch it going HIGH briefly before timeout.
-//               So the "never went HIGH" streak resets often.
-//
-// D3 unplugged: INPUT_PULLDOWN holds the pin LOW forever.
-//               pulseIn never sees a HIGH, and this streak
-//               climbs every single cycle until confirmed.
-//
-// This is the only reliable distinction between the two
-// cases that doesn't depend on pre-pulse pin state noise.
-const int NO_ECHO_CONFIRM = 10;   // ~800ms at 80ms/cycle
-int       noEchoStreak    = 0;
-
-//  D2 fault debounce 
+// Fault detection counters 
+const int NO_ECHO_CONFIRM   = 10;
+int       noEchoStreak      = 0;
 const int FAULT_CONFIRM_COUNT = 5;
-int       faultConsecutive    = 0;
+int       faultConsecutive  = 0;
 
-// WiFi and MQTT clients 
-WiFiClient wifiClient;
-MqttClient mqttClient(wifiClient);
+// WiFi and MQTT state 
+bool wifiConnected  = false;
+bool mqttConnected  = false;
+WiFiClient  wifiClient;
+MqttClient  mqttClient(wifiClient);
+
+// WiFi failure LED flash state 
+unsigned long lastFlash   = 0;
+bool          flashState  = false;
+const long    flashInterval = 500;  // flash all LEDs every 500ms
 
 
 void setup() {
@@ -73,58 +82,93 @@ void setup() {
   pinMode(TRIG_PIN,   OUTPUT);
   pinMode(ECHO_PIN,   INPUT_PULLDOWN);
   pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(LED_GREEN,  OUTPUT);
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(LED_RED,    OUTPUT);
 
-  Serial.println("=== SENSING UNIT STARTING ===");
+  // All LEDs on briefly to confirm power
+  digitalWrite(LED_GREEN,  HIGH);
+  digitalWrite(LED_YELLOW, HIGH);
+  digitalWrite(LED_RED,    HIGH);
+  delay(800);
+  digitalWrite(LED_GREEN,  LOW);
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_RED,    LOW);
 
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(WIFI_SSID);
+  Serial.println("===========================================");
+  Serial.println("  SENSING UNIT — Smart Distance Monitor");
+  Serial.println("  SIT210 Embedded Systems Development");
+  Serial.println("===========================================");
+  Serial.println("[SYSTEM] Sensing unit starting...");
+  Serial.println("[SYSTEM] Local LEDs and buzzer active regardless of WiFi.");
 
-  while (WiFi.begin(WIFI_SSID, WIFI_PASS) != WL_CONNECTED) {
-    Serial.print(".");
-    delay(1000);
-  }
-
-  Serial.println();
-  Serial.print("WiFi connected. IP: ");
-  Serial.println(WiFi.localIP());
-
-  Serial.print("Connecting to MQTT broker: ");
-  Serial.println(MQTT_BROKER);
-
-  while (!mqttClient.connect(MQTT_BROKER, MQTT_PORT)) {
-    Serial.print("MQTT connection failed. Error: ");
-    Serial.println(mqttClient.connectError());
-    delay(2000);
-  }
-
-  Serial.println("MQTT connected.");
-  Serial.println("Sensing unit ready. Publishing data...");
+  // Attempt WiFi connection — non-blocking approach
+  // If WiFi fails, sensing and local outputs still work
+  connectWifi();
 }
 
 
+// WiFi connection — attempts once, does not block forever
+// If it fails, wifiConnected stays false and local outputs
+// continue operating independently
+
+void connectWifi() {
+  Serial.print("[WIFI] Connecting to: ");
+  Serial.println(WIFI_SSID);
+
+  // Flash yellow LED during connection attempt
+  int attempts = 0;
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  while (WiFi.status() != WL_CONNECTED && attempts < 15) {
+    delay(1000);
+    Serial.print(".");
+    digitalWrite(LED_YELLOW, flashState ? HIGH : LOW);
+    flashState = !flashState;
+    attempts++;
+  }
+  digitalWrite(LED_YELLOW, LOW);
+
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiConnected = true;
+    Serial.println();
+    Serial.print("[WIFI] Connected. IP: ");
+    Serial.println(WiFi.localIP());
+    connectMqtt();
+  } else {
+    wifiConnected = false;
+    Serial.println();
+    Serial.println("[WIFI] Connection FAILED — operating in standalone mode.");
+    Serial.println("[WIFI] Local LEDs and buzzer will continue working.");
+    Serial.println("[WIFI] Display unit will show WiFi connection failure.");
+  }
+}
+
+
+// MQTT connection
+=
+void connectMqtt() {
+  Serial.print("[MQTT] Connecting to broker: ");
+  Serial.println(MQTT_BROKER);
+
+  if (mqttClient.connect(MQTT_BROKER, MQTT_PORT)) {
+    mqttConnected = true;
+    Serial.println("[MQTT] Connected successfully.");
+  } else {
+    mqttConnected = false;
+    Serial.print("[MQTT] Connection failed. Error: ");
+    Serial.println(mqttClient.connectError());
+  }
+}
+
+/
 // SENSING LAYER
-//
-// How fault detection works:
-//
-//  NORMAL  — at least 2 valid distance readings received.
-//
-//  EMPTY   — all 5 timed out BUT at least one pulse caused
-//            the echo pin to go HIGH (even briefly before
-//            timeout). The sensor is alive, room is empty.
-//
-//  FAULT D3 — all 5 timed out AND echo pin NEVER went HIGH
-//             across NO_ECHO_CONFIRM consecutive cycles.
-//             D3 is physically unplugged — INPUT_PULLDOWN
-//             holds it LOW and pulseIn never fires.
-//
-//  FAULT D2 — mixed result (some timeouts, < 2 valid).
-//             Trigger signal is not reaching the sensor.
-//             D2 is loose or unplugged.
+// Five readings per cycle with fault classification
 
 void runSensingLayer() {
-  long totalDuration       = 0;
-  int  validSamplesCount   = 0;
-  int  timeoutSamplesCount = 0;
+  long totalDuration         = 0;
+  int  validSamplesCount     = 0;
+  int  timeoutSamplesCount   = 0;
   bool echoWentHighThisCycle = false;
 
   for (int i = 0; i < NUM_READINGS; i++) {
@@ -134,15 +178,10 @@ void runSensingLayer() {
     delayMicroseconds(10);
     digitalWrite(TRIG_PIN, LOW);
 
-    // Extended timeout — gives time to detect a HIGH even
-    // when no object is in range (empty room echo still
-    // briefly pulses the pin before dying out)
     long singleDuration = pulseIn(ECHO_PIN, HIGH, 25000);
 
     if (singleDuration > 0) {
-      // Echo pin went HIGH — sensor is definitely alive
       echoWentHighThisCycle = true;
-
       int checkDist = singleDuration * 0.034 / 2;
       if (checkDist >= 2 && checkDist <= 400) {
         totalDuration += singleDuration;
@@ -150,18 +189,12 @@ void runSensingLayer() {
       }
     } else {
       timeoutSamplesCount++;
-      // Even a timeout can mean the pin went HIGH then LOW
-      // before pulseIn returned — but we only flag HIGH
-      // when pulseIn actually caught a duration > 0
     }
-
     delayMicroseconds(500);
   }
 
-  // CLASSIFICATION 
-
+  // Classification
   if (validSamplesCount >= 2) {
-    //  NORMAL
     noEchoStreak         = 0;
     faultConsecutive     = 0;
     sensorFaultTriggered = false;
@@ -171,69 +204,41 @@ void runSensingLayer() {
     averageDistance      = avgDuration * 0.034 / 2;
 
   } else if (timeoutSamplesCount == NUM_READINGS) {
-    // ALL 5 TIMED OUT 
-    // Distinguish empty room from D3 unplugged by whether
-    // the echo pin ever went HIGH during this cycle.
     faultConsecutive = 0;
-
     if (echoWentHighThisCycle) {
-      // Echo pin fired — sensor is alive, just no object
       noEchoStreak         = 0;
       sensorFaultTriggered = false;
       noTargetInView       = true;
       faultPin             = "";
       averageDistance      = 999;
     } else {
-      // Echo pin never went HIGH after trigger pulses
-      // Count up — if this persists it's a pulled wire
       noEchoStreak++;
-
       if (noEchoStreak >= NO_ECHO_CONFIRM) {
-        // Confirmed D3 unplugged
         sensorFaultTriggered = true;
         noTargetInView       = false;
         faultPin             = "D3";
-        Serial.println("[FAULT] Confirmed — Check sensor pin D3 (ECHO)");
+        Serial.println("[FAULT] Confirmed — Check sensor pin D3 (Echo)");
       } else {
-        // Not confirmed yet — stay as SCANNING
         sensorFaultTriggered = false;
         noTargetInView       = true;
         faultPin             = "";
         averageDistance      = 999;
       }
     }
-
   } else {
-    // MIXED RESULT 
-    // Some timeouts, fewer than 2 valid — D2 likely loose
     noEchoStreak = 0;
     faultConsecutive++;
-
     if (faultConsecutive >= FAULT_CONFIRM_COUNT) {
       sensorFaultTriggered = true;
       noTargetInView       = false;
       faultPin             = "D2";
-      Serial.println("[FAULT] Confirmed — Check sensor pin D2 (TRIG)");
+      Serial.println("[FAULT] Confirmed — Check sensor pin D2 (Trigger)");
     }
-    // Not yet confirmed — keep previous state
   }
 }
 
 
-// BUZZER CONTROL
-
-void runBuzzer(String zone) {
-  if (zone == "WARNING") {
-    tone(BUZZER_PIN, 1000, 50);
-  } else if (zone == "DANGER") {
-    tone(BUZZER_PIN, 1600);
-  } else {
-    noTone(BUZZER_PIN);
-  }
-}
-
-
-// DETERMINE ZONE
+// ZONE CLASSIFICATION
 
 String getZone() {
   if (sensorFaultTriggered)                    return "FAULT";
@@ -243,24 +248,99 @@ String getZone() {
   return "DANGER";
 }
 
-// PUBLISH TO MQTT
+
+// LOCAL LED CONTROL
+// Runs on sensing unit regardless of WiFi status
+// Gives immediate local visual feedback at the sensor location
+
+void setLocalLEDs(bool green, bool yellow, bool red) {
+  digitalWrite(LED_GREEN,  green  ? HIGH : LOW);
+  digitalWrite(LED_YELLOW, yellow ? HIGH : LOW);
+  digitalWrite(LED_RED,    red    ? HIGH : LOW);
+}
+
+
+// WiFi FAILURE LED PATTERN
+// All three LEDs flash together to indicate WiFi fault
+// This runs in the background using millis so it does not
+// block the sensing loop
+
+void runWifiFailurePattern() {
+  unsigned long now = millis();
+  if (now - lastFlash >= flashInterval) {
+    lastFlash  = now;
+    flashState = !flashState;
+    digitalWrite(LED_GREEN,  flashState ? HIGH : LOW);
+    digitalWrite(LED_YELLOW, flashState ? HIGH : LOW);
+    digitalWrite(LED_RED,    flashState ? HIGH : LOW);
+  }
+}
+
+
+// LOCAL OUTPUT UPDATE
+// Controls local LEDs and buzzer on the sensing unit
+// Runs regardless of WiFi status — always provides local alert
+
+void runLocalOutputs(String zone) {
+  if (!wifiConnected) {
+    // WiFi failed — flash all LEDs as a WiFi fault indicator
+    // Buzzer gives a double-beep pattern to indicate comms loss
+    runWifiFailurePattern();
+    tone(BUZZER_PIN, 800, 100);
+    return;
+  }
+
+  if (zone == "FAULT") {
+    setLocalLEDs(false, false, false);
+    noTone(BUZZER_PIN);
+
+  } else if (zone == "SCANNING") {
+    setLocalLEDs(true, false, false);
+    noTone(BUZZER_PIN);
+
+  } else if (zone == "SAFE") {
+    setLocalLEDs(true, false, false);
+    noTone(BUZZER_PIN);
+
+  } else if (zone == "WARNING") {
+    setLocalLEDs(false, true, false);
+    tone(BUZZER_PIN, 1000, 50);
+
+  } else if (zone == "DANGER") {
+    setLocalLEDs(false, false, true);
+    tone(BUZZER_PIN, 1600);
+  }
+}
+
+
+// MQTT PUBLISH
+// Publishes zone and distance to broker
+// If MQTT drops, attempts reconnect then continues locally
 
 void publishData(String zone, int distance) {
+  if (!wifiConnected) return;  // skip if WiFi not connected
+
   mqttClient.poll();
 
   if (!mqttClient.connected()) {
-    Serial.println("MQTT disconnected. Reconnecting...");
-    while (!mqttClient.connect(MQTT_BROKER, MQTT_PORT)) {
-      delay(1000);
+    mqttConnected = false;
+    Serial.println("[MQTT] Disconnected — attempting reconnect...");
+    if (mqttClient.connect(MQTT_BROKER, MQTT_PORT)) {
+      mqttConnected = true;
+      Serial.println("[MQTT] Reconnected.");
+    } else {
+      Serial.println("[MQTT] Reconnect failed. Will retry next cycle.");
+      return;
     }
-    Serial.println("MQTT reconnected.");
   }
 
+  // Publish distance
   mqttClient.beginMessage(TOPIC_DISTANCE);
   if (distance == 999) mqttClient.print("---");
   else mqttClient.print(String(distance));
   mqttClient.endMessage();
 
+  // Publish zone — use FAULT:D2 or FAULT:D3 format for pin faults
   mqttClient.beginMessage(TOPIC_ZONE);
   if (zone == "FAULT" && faultPin != "") {
     mqttClient.print("FAULT:" + faultPin);
@@ -269,10 +349,11 @@ void publishData(String zone, int distance) {
   }
   mqttClient.endMessage();
 
+  // Serial log
   Serial.print("[PUBLISH] Zone: ");
   Serial.print(zone);
   if (zone == "FAULT" && faultPin != "") {
-    Serial.print(" | Check sensor pin " + faultPin);
+    Serial.print(" | Fault pin: " + faultPin);
   }
   Serial.print(" | Distance: ");
   Serial.print(distance == 999 ? "---" : String(distance) + " cm");
@@ -285,15 +366,29 @@ void publishData(String zone, int distance) {
 void loop() {
   unsigned long currentMillis = millis();
 
+  // Sense every 80ms — always runs regardless of WiFi
   if (currentMillis - lastSensorRead >= sensorInterval) {
     lastSensorRead = currentMillis;
     runSensingLayer();
   }
 
+  // Update local outputs and publish every 300ms
   if (currentMillis - lastPublish >= publishInterval) {
     lastPublish = currentMillis;
     currentZone = getZone();
-    runBuzzer(currentZone);
+    runLocalOutputs(currentZone);
     publishData(currentZone, averageDistance);
+  }
+
+  // Periodically check WiFi and attempt reconnect if dropped
+  if (currentMillis - lastWifiCheck >= wifiCheckInterval) {
+    lastWifiCheck = currentMillis;
+    if (WiFi.status() != WL_CONNECTED) {
+      if (wifiConnected) {
+        Serial.println("[WIFI] Connection lost — attempting reconnect...");
+        wifiConnected = false;
+      }
+      connectWifi();
+    }
   }
 }
