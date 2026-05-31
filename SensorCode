@@ -36,9 +36,9 @@ const char TOPIC_ZONE[]     = "sit210_Task11.1/zone";
 #define TRIG_PIN     2
 #define ECHO_PIN     3
 #define BUZZER_PIN   7
-#define LED_GREEN    8    // NEW — local LED on sensing unit
-#define LED_YELLOW   9    // NEW — local LED on sensing unit
-#define LED_RED      10   // NEW — local LED on sensing unit
+#define LED_GREEN    8    // New LED on sensing unit
+#define LED_YELLOW   9    // New  LED on sensing unit
+#define LED_RED      10   // NEW   LED on sensing unit
 
 //  Timing 
 unsigned long lastSensorRead  = 0;
@@ -146,7 +146,7 @@ void connectWifi() {
 
 
 // MQTT connection
-=
+
 void connectMqtt() {
   Serial.print("[MQTT] Connecting to broker: ");
   Serial.println(MQTT_BROKER);
@@ -161,7 +161,7 @@ void connectMqtt() {
   }
 }
 
-/
+
 // SENSING LAYER
 // Five readings per cycle with fault classification
 
@@ -237,7 +237,6 @@ void runSensingLayer() {
   }
 }
 
-
 // ZONE CLASSIFICATION
 
 String getZone() {
@@ -259,7 +258,6 @@ void setLocalLEDs(bool green, bool yellow, bool red) {
   digitalWrite(LED_RED,    red    ? HIGH : LOW);
 }
 
-
 // WiFi FAILURE LED PATTERN
 // All three LEDs flash together to indicate WiFi fault
 // This runs in the background using millis so it does not
@@ -275,7 +273,6 @@ void runWifiFailurePattern() {
     digitalWrite(LED_RED,    flashState ? HIGH : LOW);
   }
 }
-
 
 // LOCAL OUTPUT UPDATE
 // Controls local LEDs and buzzer on the sensing unit
