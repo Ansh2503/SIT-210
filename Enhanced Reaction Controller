@@ -1,0 +1,305 @@
+using System;
+
+namespace SimpleReactionMachine
+{
+    public class EnhancedReactionController : IController
+    {
+        // Interfaces
+        private IGui _gui = null!;
+        private IRandom _rng = null!;
+        private IState _state = null!;
+
+        // Variables
+        private int _ticks;
+        private int _waitTime;
+        private int _gamesPlayed;
+        private double _totalReactionTime;
+        
+       
+        // Constants
+        private const int MAX_GAMES = 3;
+        private const int READY_TIMEOUT = 1000;
+        private const int RESULT_DISPLAY_TIME = 300;
+        private const int AVERAGE_DISPLAY_TIME = 500;
+        private const int CHEAT_DISPLAY_TIME = 200;
+        private const int MAX_REACTION_TIME = 200;
+
+        // Connect GUI and RNG
+        public void Connect(IGui gui, IRandom rng)
+        {
+            _gui = gui;
+            _rng = rng;
+            _state = new ReadyForCoinState(this);
+        }
+
+        // Initialise machine
+        public void Init()
+        {
+            _gui.SetDisplay("Insert coin");
+        }
+
+        // Event methods
+        public void CoinInserted()
+        {
+            _state.CoinInserted();
+        }
+
+        public void GoStopPressed()
+        {
+            _state.GoStopPressed();
+        }
+
+        public void Tick()
+        {
+            _state.Tick();
+        }
+
+        // Reset machine to initial state
+        private void ResetMachine()
+        {
+            _ticks = 0;
+            _gamesPlayed = 0;
+            _totalReactionTime = 0;
+            _gui.SetDisplay("Insert coin");
+            _state = new ReadyForCoinState(this);
+        }
+
+        // Start a new random wait period
+        private void StartWaitingPeriod()
+        {
+            _ticks = 0;
+            _waitTime = _rng.GetRandom(100, 251);
+            _gui.SetDisplay("Wait...");
+            _state = new WaitingState(this);
+        }
+
+        // Called after result is shown: go to next game or show average
+        private void MoveAfterResult()
+        {
+            if (_gamesPlayed < MAX_GAMES)
+            {
+                StartWaitingPeriod();
+            }
+            else
+            {
+                _state = new AverageState(this);
+            }
+        }
+
+        // Abort game (cheating detected)
+        private void AbortGame()
+        {
+            _gui.SetDisplay("Cheating!");
+            _ticks = 0;
+            _state = new AbortState(this);
+        }
+
+        // STATE INTERFACE
+        private interface IState
+        {
+            void CoinInserted();
+            void GoStopPressed();
+            void Tick();
+        }
+
+        // STATE 1 - WAITING FOR COIN
+        private class ReadyForCoinState : IState
+        {
+            private EnhancedReactionController _controller;
+
+            public ReadyForCoinState(EnhancedReactionController controller)
+            {
+                _controller = controller;
+            }
+
+            public void CoinInserted()
+            {
+                _controller._ticks = 0;
+                _controller._gamesPlayed = 0;
+                _controller._totalReactionTime = 0;
+                _controller._gui.SetDisplay("Press GO!");
+                _controller._state = new ReadyState(_controller);
+            }
+
+            public void GoStopPressed() { }
+            public void Tick() { }
+        }
+
+        // STATE 2 - WAITING FOR GO (after coin inserted)
+        private class ReadyState : IState
+        {
+            private EnhancedReactionController _controller;
+
+            public ReadyState(EnhancedReactionController controller)
+            {
+                _controller = controller;
+            }
+
+            public void CoinInserted() { }
+
+            public void GoStopPressed()
+            {
+                _controller.StartWaitingPeriod();
+            }
+
+            public void Tick()
+            {
+                _controller._ticks++;
+                if (_controller._ticks >= READY_TIMEOUT)
+                {
+                    _controller.ResetMachine();
+                }
+            }
+        }
+
+        // STATE 3 - RANDOM WAIT (before reaction window opens)
+        private class WaitingState : IState
+        {
+            private EnhancedReactionController _controller;
+
+            public WaitingState(EnhancedReactionController controller)
+            {
+                _controller = controller;
+            }
+
+            public void CoinInserted() { }
+
+            public void GoStopPressed()
+            {
+                _controller.AbortGame();
+            }
+
+            public void Tick()
+            {
+                _controller._ticks++;
+                if (_controller._ticks >= _controller._waitTime)
+                {
+                    _controller._ticks = 0;
+                    _controller._state = new TimingState(_controller);
+                }
+            }
+        }
+
+        // STATE 4 - TIMING (measuring reaction time)
+        private class TimingState : IState
+        {
+            private EnhancedReactionController _controller;
+
+            public TimingState(EnhancedReactionController controller)
+            {
+                _controller = controller;
+            }
+
+            public void CoinInserted() { }
+
+            public void GoStopPressed()
+            {
+                double reactionTime = _controller._ticks * 0.01;
+                _controller._totalReactionTime += reactionTime;
+                _controller._gamesPlayed++;
+                _controller._gui.SetDisplay(reactionTime.ToString("0.00"));
+                _controller._ticks = 0;
+                _controller._state = new ResultState(_controller);
+            }
+
+            public void Tick()
+            {
+                _controller._ticks++;
+
+                // Show live elapsed time so player knows timing has started
+                double elapsed = _controller._ticks * 0.01;
+                _controller._gui.SetDisplay(elapsed.ToString("0.00"));
+                double reactionTime = _controller._ticks * 0.01;
+
+                if (_controller._ticks >= MAX_REACTION_TIME)
+                {
+                    // Auto-stop: record the time and move to result
+                    GoStopPressed();
+                }
+                
+            }
+        }
+
+        // STATE 5 - SHOW RESULT (display reaction time for up to 3 seconds)
+        private class ResultState : IState
+        {
+            private EnhancedReactionController _controller;
+
+            public ResultState(EnhancedReactionController controller)
+            {
+                _controller = controller;
+                _controller._ticks = 0;
+            }
+
+            public void CoinInserted() { }
+
+            public void GoStopPressed()
+            {
+                _controller.MoveAfterResult();
+            }
+
+            public void Tick()
+            {
+                _controller._ticks++;
+                if (_controller._ticks >= RESULT_DISPLAY_TIME)
+                {
+                    _controller.MoveAfterResult();
+                }
+                
+            }
+        }
+
+        // STATE 6 - SHOW AVERAGE (display average after all 3 games)
+        private class AverageState : IState
+        {
+            private EnhancedReactionController _controller;
+
+            public AverageState(EnhancedReactionController controller)
+            {
+                _controller = controller;
+                _controller._ticks = 0;
+                double average = _controller._totalReactionTime / MAX_GAMES;
+                _controller._gui.SetDisplay("Average = " + average.ToString("0.00") );
+            }
+
+            public void CoinInserted() { }
+
+            public void GoStopPressed()
+            {
+                _controller.ResetMachine();
+            }
+
+            public void Tick()
+            {
+                _controller._ticks++;
+                if (_controller._ticks >= AVERAGE_DISPLAY_TIME)
+                {
+                    _controller.ResetMachine();
+                }
+            }
+        }
+
+        // STATE 7 - ABORT (cheating penalty display)
+        private class AbortState : IState
+        {
+            private EnhancedReactionController _controller;
+
+            public AbortState(EnhancedReactionController controller)
+            {
+                _controller = controller;
+            }
+
+            public void CoinInserted() { }
+            public void GoStopPressed() { }
+
+            public void Tick()
+            {
+                _controller._ticks++;
+                if (_controller._ticks >= CHEAT_DISPLAY_TIME)
+                {
+                    _controller.ResetMachine();
+                }
+            }
+        }
+    }
+}
