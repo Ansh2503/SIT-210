@@ -1,0 +1,60 @@
+#define BUTTON_PIN 2
+#define PORCH_LED 5
+#define HALL_LED 6
+
+unsigned long porchStartTime = 0;
+unsigned long hallStartTime = 0;
+
+bool porchOn = false;
+bool hallOn = false;
+
+// For button edge detection
+bool lastButtonState = HIGH; // INPUT_PULLUP defaults to HIGH
+
+void setup() {
+  pinMode(BUTTON_PIN, INPUT_PULLUP); // Using internal pull-up
+  pinMode(PORCH_LED, OUTPUT);
+  pinMode(HALL_LED, OUTPUT);
+  digitalWrite(PORCH_LED, LOW);
+  digitalWrite(HALL_LED, LOW);
+}
+
+void checkButton() {
+  bool currentState = digitalRead(BUTTON_PIN);
+
+  // Detect falling edge (button pressed)
+  if (currentState == LOW && lastButtonState == HIGH) {
+    porchOn = true;
+    hallOn = true;
+    porchStartTime = millis();
+    hallStartTime = millis();
+  }
+
+  lastButtonState = currentState;
+}
+
+void porchLight() {
+  if (porchOn) {
+    digitalWrite(PORCH_LED, HIGH);
+    if (millis() - porchStartTime >= 30000) { // 30 seconds
+      digitalWrite(PORCH_LED, LOW);
+      porchOn = false;
+    }
+  }
+}
+
+void hallLight() {
+  if (hallOn) {
+    digitalWrite(HALL_LED, HIGH);
+    if (millis() - hallStartTime >= 60000) { // 60 seconds
+      digitalWrite(HALL_LED, LOW);
+      hallOn = false;
+    }
+  }
+}
+
+void loop() {
+  checkButton();
+  porchLight();
+  hallLight();
+}

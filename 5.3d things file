@@ -1,0 +1,29 @@
+#include <ArduinoIoTCloud.h>
+#include <Arduino_ConnectionHandler.h>
+#include <WiFiNINA.h>
+
+// WiFi credentials
+const char SSID[] = "2002/33_Rose_Lane";
+const char PASS[] = "H@Dc!#G2Q9XcnJ63";
+
+// CLOUD VARIABLES (Backend State)
+bool livingRoom;
+bool bathroom;
+bool closet;
+
+// CALLBACK DECLARATIONS
+void onLivingRoomChange();
+void onBathroomChange();
+void onClosetChange();
+
+// WiFi connection
+WiFiConnectionHandler ArduinoIoTPreferredConnection(SSID, PASS);
+
+void initProperties() {
+
+  ArduinoCloud.setThingId("3693502f-cba4-444f-9e55-7f1297ab9b32");
+
+  ArduinoCloud.addProperty(livingRoom, READWRITE, ON_CHANGE, onLivingRoomChange);
+  ArduinoCloud.addProperty(bathroom, READWRITE, ON_CHANGE, onBathroomChange);
+  ArduinoCloud.addProperty(closet, READWRITE, ON_CHANGE, onClosetChange);
+}

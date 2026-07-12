@@ -1,0 +1,59 @@
+#include "mainwindow.h"
+#include <QApplication>
+#include <QCheckBox>
+#include <QVBoxLayout>
+#include <QWidget>
+#include <wiringPi.h>
+
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent)
+{
+    // Initialize GPIO
+    wiringPiSetup();
+    pinMode(0, OUTPUT); // Living Room
+    pinMode(2, OUTPUT); // Bathroom
+    pinMode(3, OUTPUT); // Closet
+
+    QWidget *centralWidget = new QWidget(this);
+    QVBoxLayout *layout = new QVBoxLayout;
+
+    // Create checkboxes
+    QCheckBox *livingRoom = new QCheckBox("Living Room");
+    QCheckBox *bathroom   = new QCheckBox("Bathroom");
+    QCheckBox *closet     = new QCheckBox("Closet");
+
+    QPushButton *exitBtn = new QPushButton("Exit");
+
+    // Add to layout
+    layout->addWidget(livingRoom);
+    layout->addWidget(bathroom);
+    layout->addWidget(closet);
+    layout->addWidget(exitBtn);
+
+    centralWidget->setLayout(layout);
+    setCentralWidget(centralWidget);
+
+    // Connect checkboxes to GPIO
+    connect(livingRoom, &QCheckBox::toggled, [](bool checked){
+        digitalWrite(0, checked ? HIGH : LOW);
+    });
+
+    connect(bathroom, &QCheckBox::toggled, [](bool checked){
+        digitalWrite(2, checked ? HIGH : LOW);
+    });
+
+    connect(closet, &QCheckBox::toggled, [](bool checked){
+        digitalWrite(3, checked ? HIGH : LOW);
+    });
+
+    // Exit button
+    connect(exitBtn, &QPushButton::clicked, qApp, &QApplication::quit);
+}
+
+MainWindow::~MainWindow()
+{
+    // Turn everything OFF on exit
+    digitalWrite(0, LOW);
+    digitalWrite(2, LOW);
+    digitalWrite(3, LOW);
+}

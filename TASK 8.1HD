@@ -1,0 +1,119 @@
+
+#include <ArduinoBLE.h>
+
+//PIN DEFINITIONS 
+const int BATHROOM_LED  = 4;
+const int HALLWAY_LED   = 5;
+const int FAN_PIN       = 6;
+const int LIGHT_SENSOR  = A0;
+
+// Light threshold: below this value = dark room, turn on LEDs
+const int DARK_THRESHOLD = 400;   
+
+// BLUETOOTH SERVICE  WITH UNIQUE ID
+// UUIDs - must match any central trying to connect
+BLEService lightService("19B10000-E8F2-537E-4F6C-D104768A1214");
+//Bluetooth characteristic that accepts written values, here rpi sends commands
+BLEStringCharacteristic cmdChar(
+    "19B10001-E8F2-537E-4F6C-D104768A1214",
+    BLEWrite, 1
+);
+
+// STATE 
+bool lightsOn = false;
+bool fanOn    = false;
+
+// SETUP 
+void setup() {
+    Serial.begin(9600);
+    while (!Serial);
+
+    // Pin modes
+    pinMode(BATHROOM_LED, OUTPUT);
+    pinMode(HALLWAY_LED,  OUTPUT);
+    pinMode(FAN_PIN,      OUTPUT);
+    pinMode(LIGHT_SENSOR, INPUT);
+
+    // All off at startup
+    digitalWrite(BATHROOM_LED, LOW);
+    digitalWrite(HALLWAY_LED,  LOW);
+    digitalWrite(FAN_PIN,      LOW);
+
+    // Init BLE
+    if (!BLE.begin()) {
+        Serial.println("BLE init failed!");
+        while (1);
+    }
+
+    BLE.setLocalName("LightController");
+    BLE.setAdvertisedService(lightService);
+    lightService.addCharacteristic(cmdChar);
+    BLE.addService(lightService);
+    BLE.advertise();
+
+    Serial.println("Arduino BLE ready. Waiting for RPi...");
+}
+
+//  HELPERS 
+bool isRoomDark() {
+    int val = analogRead(LIGHT_SENSOR);
+    Serial.print("Light sensor: "); Serial.println(val);
+    return (val < DARK_THRESHOLD);
+}
+
+void handleLightsOn() {
+    if (isRoomDark()) {
+        // Dark room - turn on both LEDs
+        digitalWrite(BATHROOM_LED, HIGH);
+        digitalWrite(HALLWAY_LED,  HIGH);
+        Serial.println("Room is dark - LEDs ON");
+    } else {
+     
+        Serial.println("Room is bright - LEDs kept OFF");
+    }
+    lightsOn = true;
+}
+
+void handleLightsOff() {
+    digitalWrite(BATHROOM_LED, LOW);
+    digitalWrite(HALLWAY_LED,  LOW);
+    lightsOn = false;
+    Serial.println("LEDs OFF");
+}
+
+void handleFanOn() {
+    digitalWrite(FAN_PIN, HIGH);
+    fanOn = true;
+    Serial.println("Fan ON");
+}
+
+void handleFanOff() {
+    digitalWrite(FAN_PIN, LOW);
+    fanOn = false;
+    Serial.println("Fan OFF");
+}
+
+// MAIN LOOP 
+void loop() {
+    BLEDevice central = BLE.central();
+
+    if (central) {
+        Serial.print("Connected to RPi: ");
+        Serial.println(central.address());
+
+        while (central.connected()) {
+            if (cmdChar.written()) {
+                String cmd = cmdChar.value();
+                Serial.print("Command received: "); Serial.println(cmd);
+
+                if      (cmd == "L")  handleLightsOn();
+                else if (cmd == "X")  handleLightsOff();
+                else if (cmd == "F")  handleFanOn();
+                else if (cmd == "G")  handleFanOff();
+                else    Serial.println("Unknown command.");
+            }
+        }
+
+        Serial.println("RPi disconnected.");
+    }
+}

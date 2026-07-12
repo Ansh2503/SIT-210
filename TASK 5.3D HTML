@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>MQTT Smart Home</title>
+
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js">//This loads the MQTT library so your webpage can send messages to the MQTT broker.
+</script>
+</head>
+
+<body>
+
+<h2>Smart Home Control</h2>
+
+<label>
+<input type="checkbox" onchange="send('living', this.checked)">
+Living Room
+</label>
+
+<br><br>
+
+<label>
+<input type="checkbox" onchange="send('bath', this.checked)">
+Bathroom
+</label>
+
+<br><br>
+
+<label>
+<input type="checkbox" onchange="send('closet', this.checked)">
+Closet
+</label>
+
+<script>
+
+const client = mqtt.connect("wss://broker.hivemq.com:8884/mqtt");
+
+client.on("connect", () => {
+  console.log("MQTT Connected");
+});
+
+function send(room, state) {
+
+  let msg = "";
+
+  if(room === "living") msg = state ? "livingON" : "livingOFF";
+  if(room === "bath") msg = state ? "bathON" : "bathOFF";
+  if(room === "closet") msg = state ? "closetON" : "closetOFF";
+
+  client.publish("linda/home", msg);
+
+  console.log("Sent:", msg);
+}
+
+</script>
+
+</body>
+</html>
