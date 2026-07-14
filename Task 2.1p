@@ -1,1 +1,48 @@
+#include <WiFiNINA.h>
+#include "ThingSpeak.h"
 
+int lightPin = A0;
+float temperature = 26.0; // temperature
+
+char ssid[] = "TP-Link_EE15";        //  WiFi name
+char pass[] = "14004209";    // WiFi password
+
+unsigned long myChannelNumber = 3300704; // thingSpeak channel number
+const char * myWriteAPIKey = "9KNG8WWPSD3LM7IM";   // ThingSpeak Write API Key
+
+WiFiClient client;
+
+void setup() {
+  Serial.begin(9600);
+  WiFi.begin(ssid, pass);
+
+  Serial.print("Connecting to WiFi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("Connected!");
+
+  ThingSpeak.begin(client);
+}
+
+void loop() {
+  int lightLevel = analogRead(lightPin);
+
+  // Print locally
+  Serial.print("Temperature: "); Serial.println(temperature);
+  Serial.print("Light Level: "); Serial.println(lightLevel);
+
+  // Send to ThingSpeak
+  ThingSpeak.setField(1, temperature);
+  ThingSpeak.setField(2, lightLevel);
+  int response = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
+
+  if(response == 200){
+    Serial.println("Data sent successfully");
+  } else {
+    Serial.println("Problem sending data. HTTP error code: " + String(response));
+  }
+
+  delay(30000); // send data every 30 seconds
+}

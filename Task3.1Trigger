@@ -1,0 +1,114 @@
+#include <WiFiNINA.h>
+#include <PubSubClient.h>
+#include <Wire.h>
+#include <BH1750.h>
+
+// ---------- Wi-Fi Credentials ----------
+const char* ssid = "TP-Link_EE15";      // Wi-Fi name
+const char* password = "14004209";    //  Wi-Fi password
+
+// ---------- MQTT (HiveMQ Public Broker) ----------
+const char* mqttServer = "broker.hivemq.com";
+const int mqttPort = 1883;
+
+// ---------- Objects ----------
+WiFiClient wifiClient;
+PubSubClient client(wifiClient);
+BH1750 lightMeter;
+
+// ---------- Sunlight Settings ----------
+const float sunlightThreshold = 100.0; // Threshold value of sunlight
+bool sunlightState = false;            // tracks sunlight ON/OFF
+
+// ---------- Setup ----------
+void setup() {
+  Serial.begin(9600);
+  while (!Serial);
+
+  // Connect to Wi-Fi
+  Serial.print("Connecting to Wi-Fi");
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(500);
+  }
+
+  Serial.println("\nWi-Fi connected!");
+  Serial.print("Arduino IP: ");
+  Serial.println(WiFi.localIP());
+
+  // Setup MQTT
+  client.setServer(mqttServer, mqttPort);
+
+  // Initialize BH1750 sensor
+  Wire.begin();
+  if (lightMeter.begin()) {
+    Serial.println("BH1750 initialized");
+  } else {
+    Serial.println("Error initializing BH1750");
+  }
+}
+
+// Loop(main function)
+void loop() {
+  // Ensure Wi-Fi stays connected
+  if (WiFi.status() != WL_CONNECTED) {
+    reconnectWiFi();
+  }
+
+  // Ensure MQTT stays connected
+  if (!client.connected()) {
+    reconnectMQTT();
+  }
+
+  client.loop();
+
+  // Read light level
+  float lux = lightMeter.readLightLevel();
+  Serial.print("Light (lux): ");
+  Serial.println(lux);
+
+  // Trigger Logic
+  if (lux >= sunlightThreshold && !sunlightState) {
+    sunlightState = true;
+    client.publish("terrarium/light", "sunlight_started");
+    Serial.println("Sunlight started!");
+  }
+  else if (lux < sunlightThreshold && sunlightState) {
+    sunlightState = false;
+    client.publish("terrarium/light", "sunlight_stopped");
+    Serial.println("Sunlight stopped!");
+  }
+
+  delay(2000);
+}
+
+// Reconnecting  Wi-Fi
+void reconnectWiFi() {
+  Serial.println("Reconnecting Wi-Fi...");
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nWi-Fi reconnected!");
+}
+
+//Reconnecting MQTT
+void reconnectMQTT() {
+  while (!client.connected()) {
+    Serial.print("Connecting to MQTT...");
+
+    if (client.connect("ArduinoNano33IoT")) {
+      Serial.println("connected!");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" retrying...");
+      delay(2000);
+    }
+  }
+}
